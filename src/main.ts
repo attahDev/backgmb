@@ -7,15 +7,16 @@ import { AllExceptionsFilter } from './filters/all-exceptions/all-exceptions.fil
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.enableCors({
-    origin: [
-      'http://localhost:5173',
-      'https://gmbtefro-pfst.vercel.app',
-    ],
-    credentials: true,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Content-Type, Accept, Authorization',
-  });
+app.enableCors({
+  origin: [
+    "http://localhost:5173",
+    "https://gmbtefro.vercel.app",
+    "https://gmbtefro-pfst.vercel.app", // optional if you still use preview deployments
+  ],
+  credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Accept", "Authorization"],
+});
 
   // Global pipes
   app.useGlobalPipes(
