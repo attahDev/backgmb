@@ -23,6 +23,12 @@ import { CommunityController } from './community/community.controller';
 import { DashboardService } from './dashboard/dashboard.service';
 import { DashboardController } from './dashboard/dashboard.controller';
 
+import { TributesService } from './tributes/tributes.service';
+import { TributesController } from './tributes/tributes.controller';
+
+import { NominationsService } from './nominations/nominations.service';
+import { NominationsController } from './nominations/nominations.controller';
+
 @Module({
   imports: [PrismaModule],
   controllers: [
@@ -33,6 +39,8 @@ import { DashboardController } from './dashboard/dashboard.controller';
     EventsController,
     CommunityController,
     DashboardController,
+    TributesController,
+    NominationsController,
   ],
   providers: [
     ActivityService,
@@ -42,6 +50,8 @@ import { DashboardController } from './dashboard/dashboard.controller';
     EventsService,
     CommunityService,
     DashboardService,
+    TributesService,
+    NominationsService,
     RolesGuard,
   ],
   exports: [ActivityService],

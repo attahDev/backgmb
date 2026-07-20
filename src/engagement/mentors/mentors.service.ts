@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, ConflictException } from '@nestjs/common
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { MentorConnectionStatus } from '@prisma/client';
+import { CreateMentorDto } from './dto/create-mentor.dto';
+import { UpdateMentorDto } from './dto/update-mentor.dto';
 
 @Injectable()
 export class MentorsService {
@@ -98,5 +100,47 @@ export class MentorsService {
       networkGrowth,
       careerReadinessPercent: careerReadiness,
     };
+  }
+
+  // ───────────────────────── Admin: mentor directory management ─────────────────────────
+
+  async createMentor(dto: CreateMentorDto) {
+    return this.prisma.mentor.create({
+      data: {
+        name: dto.name,
+        role: dto.role,
+        company: dto.company,
+        avatarUrl: dto.avatarUrl,
+        bio: dto.bio,
+        skills: dto.skills ?? [],
+        isActive: dto.isActive ?? true,
+      },
+    });
+  }
+
+  async updateMentor(id: string, dto: UpdateMentorDto) {
+    const mentor = await this.prisma.mentor.findUnique({ where: { id } });
+    if (!mentor) throw new NotFoundException('Mentor not found');
+
+    return this.prisma.mentor.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.role !== undefined && { role: dto.role }),
+        ...(dto.company !== undefined && { company: dto.company }),
+        ...(dto.avatarUrl !== undefined && { avatarUrl: dto.avatarUrl }),
+        ...(dto.bio !== undefined && { bio: dto.bio }),
+        ...(dto.skills !== undefined && { skills: dto.skills }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
+  }
+
+  /** Soft-delete: keeps existing MentorConnection history intact and just
+   *  drops the mentor out of findAll()'s isActive:true filter. */
+  async removeMentor(id: string) {
+    const mentor = await this.prisma.mentor.findUnique({ where: { id } });
+    if (!mentor) throw new NotFoundException('Mentor not found');
+    return this.prisma.mentor.update({ where: { id }, data: { isActive: false } });
   }
 }

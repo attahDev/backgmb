@@ -45,19 +45,24 @@ export class CoursesController {
 
   @Get('by-slug/:courseSlug/modules/:lessonSlug')
   findModuleBySlug(
+    @CurrentUser() user: any,
     @Param('courseSlug') courseSlug: string,
     @Param('lessonSlug') lessonSlug: string,
   ) {
-    return this.coursesService.findModuleBySlug(courseSlug, lessonSlug);
+    return this.coursesService.findModuleBySlug(courseSlug, lessonSlug, user.userId);
   }
 
-  @Patch(':id/progress')
-  updateProgress(
+  /** The "mark this chapter/section done" checkbox. Toggles completion for
+   *  the section, recomputes whether the module (and course) are complete
+   *  from real data — nothing here trusts a number the client sends. */
+  @Patch('by-slug/:courseSlug/modules/:lessonSlug/sections/:sectionId/toggle')
+  toggleSection(
     @CurrentUser() user: any,
-    @Param('id') courseId: string,
-    @Body() body: { completedModules: number },
+    @Param('courseSlug') courseSlug: string,
+    @Param('lessonSlug') lessonSlug: string,
+    @Param('sectionId') sectionId: string,
   ) {
-    return this.coursesService.updateProgress(user.userId, courseId, body.completedModules);
+    return this.coursesService.toggleSection(user.userId, courseSlug, lessonSlug, sectionId);
   }
 
   // ───────────────────────── Admin: upload-driven content ─────────────────────────

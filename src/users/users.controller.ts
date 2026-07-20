@@ -7,9 +7,14 @@ import {
   UsePipes,
   ValidationPipe,
   Patch,
+  Param,
+  Query,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/guards/roles.guard';
+import { Roles } from 'src/decorators/roles.decorator';
 import { CurrentUser } from 'src/decorators/current-user.decorator';
 
 @Controller('users')
@@ -42,5 +47,35 @@ export class UsersController {
       changePasswordData.currentPassword,
       changePasswordData.newPassword,
     );
+  }
+
+  // ───────────────────────── Admin: user management ─────────────────────────
+
+  @Get()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  findAll(@Query('search') search?: string) {
+    return this.usersService.findAllAdmin(search);
+  }
+
+  @Get(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  findOne(@Param('id') id: string) {
+    return this.usersService.findByIdAdmin(id);
+  }
+
+  @Patch(':id/role')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  updateRole(@Param('id') id: string, @Body('role') role: UserRole) {
+    return this.usersService.updateRole(id, role);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  updateStatus(@Param('id') id: string, @Body('isActive') isActive: boolean) {
+    return this.usersService.setActive(id, isActive);
   }
 }

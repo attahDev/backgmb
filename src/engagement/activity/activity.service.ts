@@ -23,4 +23,15 @@ export class ActivityService {
       take: limit,
     });
   }
+
+  /** Platform-wide feed for the admin portal's Overview page — every
+   *  user's activity, not just the caller's, with enough user info to
+   *  display who did what. */
+  async findRecentAdmin(limit = 25) {
+    return this.prisma.activityLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: { user: { select: { id: true, firstname: true, lastname: true, email: true } } },
+    });
+  }
 }

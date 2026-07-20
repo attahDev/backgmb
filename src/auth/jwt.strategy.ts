@@ -1,11 +1,15 @@
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private prisma: PrismaService,
+  ) {
     // 1. Retrieve the secret using the argument 'configService' (NOT 'this.configService')
     const secret = configService.get<string>('JWT_SECRET');
 
@@ -23,6 +27,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    // Same tradeoff RolesGuard makes for role checks: one extra lookup per
+    // request buys immediate effect when admin deactivates someone, instead
+    // of the account staying usable until the token naturally expires (7d).
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { isActive: true },
+    });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Account is deactivated');
+    }
+
     return {
       userId: payload.sub,
       email: payload.email,

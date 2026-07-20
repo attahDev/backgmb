@@ -25,6 +25,10 @@ model User {
   organization     String?
   role             UserRole? // 👈 Uses enum now!
   isVerified       Boolean   @default(false)
+  // Admin deactivation switch — enforced in JwtStrategy so revoking access
+  // takes effect immediately rather than waiting for the token to expire
+  // (same reasoning as RolesGuard's role check).
+  isActive         Boolean   @default(true)
   agreedToTerms    Boolean   @default(false)
   subscribedToNews Boolean   @default(false)
   createdAt        DateTime  @default(now())
@@ -44,6 +48,9 @@ model User {
   eventAttendance   EventAttendance[]
   userBadges        UserBadge[]
   activityLogs      ActivityLog[]
+  tributes          Tribute[]
+  nominations       Nomination[]
+  moduleProgress    ModuleProgress[]
 
   @@map("users")
 }
@@ -427,10 +434,34 @@ model Module {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  progress ModuleProgress[]
+
   @@unique([courseId, slug])
   @@index([courseId])
   @@index([courseId, order])
   @@map("modules")
+}
+
+model ModuleProgress {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  // Section ids the user has checked "done" — validated against
+  // Module.content.sections[].id when toggled, not enforced at the DB
+  // level (Postgres text[] can't foreign-key into JSON).
+  completedSectionIds String[] @default([])
+  isCompleted         Boolean  @default(false)
+  completedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, moduleId])
+  @@index([userId])
+  @@map("module_progress")
 }
 
 model CourseProgress {
@@ -512,7 +543,39 @@ model UserBadge {
   @@map("user_badges")
 }
 
-model ActivityLog {
+model Tribute {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  message String
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("tributes")
+}
+
+model Nomination {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  nomineeName String
+  category    String?
+  story       String
+
+  // PENDING | APPROVED | REJECTED — admin has to approve before a
+  // nomination shows up as a "Recent Nomination" anywhere public.
+  status     String    @default("PENDING")
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("nominations")
+}
   id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

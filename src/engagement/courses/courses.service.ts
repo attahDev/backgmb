@@ -73,38 +73,119 @@ export class CoursesService {
     return { course, modules };
   }
 
-  async findModuleBySlug(courseSlug: string, lessonSlug: string) {
+  async findModuleBySlug(courseSlug: string, lessonSlug: string, userId?: string) {
     const course = await this.findBySlug(courseSlug);
     const module = await this.prisma.module.findUnique({
       where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
     });
     if (!module) throw new NotFoundException('Module not found');
-    return { course, module };
+
+    const progress = userId
+      ? await this.prisma.moduleProgress.findUnique({
+          where: { userId_moduleId: { userId, moduleId: module.id } },
+        })
+      : null;
+
+    return {
+      course,
+      module: {
+        ...module,
+        completedSectionIds: progress?.completedSectionIds ?? [],
+        isCompleted: progress?.isCompleted ?? false,
+      },
+    };
   }
 
-  async updateProgress(userId: string, courseId: string, completedModules: number) {
-    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
-    if (!course) throw new NotFoundException('Course not found');
+  /** The real progress mechanic — a student checks a section as done, this
+   *  toggles it, recomputes whether the whole module is done (every
+   *  section id present), and recomputes CourseProgress from a fresh count
+   *  rather than incrementing/decrementing a counter (which drifts if a
+   *  section gets unchecked, a module gets deleted, etc — a recount can't
+   *  drift). Replaces the old PATCH /courses/:id/progress, which just
+   *  trusted whatever completedModules number the client sent — turns out
+   *  nothing in the frontend was even calling it. */
+  async toggleSection(userId: string, courseSlug: string, lessonSlug: string, sectionId: string) {
+    const course = await this.findBySlug(courseSlug);
+    const module = await this.prisma.module.findUnique({
+      where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
+    });
+    if (!module) throw new NotFoundException('Module not found');
 
-    const clamped = Math.max(0, Math.min(completedModules, course.totalModules));
-    const isCompleted = course.totalModules > 0 && clamped >= course.totalModules;
+    const sections = ((module.content as any)?.sections ?? []) as Array<{ id: string }>;
+    const sectionIds = sections.map((s) => s.id);
+    if (!sectionIds.includes(sectionId)) {
+      throw new NotFoundException('Section not found in this module');
+    }
 
-    const progress = await this.prisma.courseProgress.upsert({
-      where: { userId_courseId: { userId, courseId } },
-      update: { completedModules: clamped, isCompleted },
-      create: { userId, courseId, completedModules: clamped, isCompleted },
+    const existing = await this.prisma.moduleProgress.findUnique({
+      where: { userId_moduleId: { userId, moduleId: module.id } },
     });
 
-    if (isCompleted) {
+    const current = new Set(existing?.completedSectionIds ?? []);
+    if (current.has(sectionId)) {
+      current.delete(sectionId);
+    } else {
+      current.add(sectionId);
+    }
+
+    const completedSectionIds = Array.from(current);
+    const isCompleted = sectionIds.length > 0 && sectionIds.every((id) => current.has(id));
+
+    const moduleProgress = await this.prisma.moduleProgress.upsert({
+      where: { userId_moduleId: { userId, moduleId: module.id } },
+      update: {
+        completedSectionIds,
+        isCompleted,
+        completedAt: isCompleted ? new Date() : null,
+      },
+      create: {
+        userId,
+        moduleId: module.id,
+        completedSectionIds,
+        isCompleted,
+        completedAt: isCompleted ? new Date() : null,
+      },
+    });
+
+    await this.recomputeCourseProgress(userId, course.id);
+
+    if (isCompleted && !existing?.isCompleted) {
       await this.activityService.log(
         userId,
-        'COURSE_COMPLETED',
-        `Completed ${course.title}`,
-        { courseId },
+        'MODULE_COMPLETED',
+        `Completed "${module.title}" in ${course.title}`,
+        { courseId: course.id, moduleId: module.id },
       );
     }
 
-    return progress;
+    return moduleProgress;
+  }
+
+  /** Recount from ModuleProgress rather than trust an increment/decrement —
+   *  see toggleSection's comment for why. */
+  private async recomputeCourseProgress(userId: string, courseId: string) {
+    const [course, completedModules] = await Promise.all([
+      this.prisma.course.findUnique({ where: { id: courseId } }),
+      this.prisma.moduleProgress.count({
+        where: { userId, isCompleted: true, module: { courseId } },
+      }),
+    ]);
+    if (!course) return;
+
+    const isCompleted = course.totalModules > 0 && completedModules >= course.totalModules;
+    const wasCompletedBefore = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+
+    await this.prisma.courseProgress.upsert({
+      where: { userId_courseId: { userId, courseId } },
+      update: { completedModules, isCompleted },
+      create: { userId, courseId, completedModules, isCompleted },
+    });
+
+    if (isCompleted && !wasCompletedBefore?.isCompleted) {
+      await this.activityService.log(userId, 'COURSE_COMPLETED', `Completed ${course.title}`, { courseId });
+    }
   }
 
   async countCompleted(userId: string) {

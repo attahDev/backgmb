@@ -5,6 +5,20 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
+import { UserRole } from '@prisma/client';
+
+const ADMIN_SAFE_SELECT = {
+  id: true,
+  email: true,
+  firstname: true,
+  lastname: true,
+  organization: true,
+  role: true,
+  isVerified: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class UsersService {
@@ -88,5 +102,56 @@ export class UsersService {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  // ───────────────────────── Admin: user management ─────────────────────────
+
+  async findAllAdmin(search?: string) {
+    return this.prisma.user.findMany({
+      where: search
+        ? {
+            OR: [
+              { email: { contains: search, mode: 'insensitive' } },
+              { firstname: { contains: search, mode: 'insensitive' } },
+              { lastname: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : undefined,
+      select: ADMIN_SAFE_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findByIdAdmin(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: ADMIN_SAFE_SELECT,
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  async updateRole(id: string, role: UserRole) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+
+    return this.prisma.user.update({
+      where: { id },
+      data: { role },
+      select: ADMIN_SAFE_SELECT,
+    });
+  }
+
+  /** Immediate effect — JwtStrategy checks isActive on every request, so a
+   *  deactivated user's existing token stops working right away. */
+  async setActive(id: string, isActive: boolean) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+
+    return this.prisma.user.update({
+      where: { id },
+      data: { isActive },
+      select: ADMIN_SAFE_SELECT,
+    });
   }
 }

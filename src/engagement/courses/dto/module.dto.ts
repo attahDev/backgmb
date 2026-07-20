@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 /** Free-form display metadata that used to be hardcoded in
  *  sustainabilityCourses.ts — image, duration, level, etc. All optional so
@@ -41,19 +42,96 @@ export class UpdateCourseDto {
   @IsOptional() @IsBoolean() isActive?: boolean;
 }
 
+export class SectionMediaDto {
+  @IsIn(['image', 'video'])
+  type: 'image' | 'video';
+
+  @IsString()
+  @IsNotEmpty()
+  url: string;
+
+  @IsOptional()
+  @IsString()
+  caption?: string;
+}
+
+export class ModuleSectionDto {
+  /** Stable within the module — a student's "mark as done" checkbox is
+   *  recorded against this id (see ModuleProgress), so don't reuse an id
+   *  for a different section later or their completion state orphans. */
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  /** Matches the frontend's existing LessonSectionType — this DTO extends
+   *  the section shape the UI already renders (LessonContent.tsx), it
+   *  doesn't replace it. */
+  @IsOptional()
+  @IsIn(['content', 'example', 'case-study', 'activity', 'summary', 'questions'])
+  type?: 'content' | 'example' | 'case-study' | 'activity' | 'summary' | 'questions';
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  paragraphs?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  points?: string[];
+
+  /** New: optional image/video embed for this section. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SectionMediaDto)
+  media?: SectionMediaDto;
+
+  @IsInt()
+  @Min(0)
+  order: number;
+}
+
+export class ModuleContentDto {
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  learningOutcomes?: string[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ModuleSectionDto)
+  sections: ModuleSectionDto[];
+}
+
 export class CreateModuleDto {
   @IsString()
   @IsNotEmpty()
   title: string;
 
   /**
-   * Structured content for the lesson — description/duration/learningOutcomes/
-   * sections, matching the shape the frontend used to get from
-   * sustainabilityCourses.ts. Kept as JSON so we don't force a rigid schema
-   * on lesson authors.
+   * Chapter content — a description plus an ordered list of sections
+   * (content/example/case-study/activity/summary/questions, same as the
+   * existing lesson viewer), each optionally with an image/video embed.
+   * Each section needs a stable `id`: that's what a
+   * student's "mark as done" checkbox is recorded against
+   * (see ModuleProgress), so don't reuse an id for a different section
+   * later or their completion state will silently point at the wrong thing.
    */
-  @IsObject()
-  content: Record<string, any>;
+  @ValidateNested()
+  @Type(() => ModuleContentDto)
+  content: ModuleContentDto;
 
   @IsOptional()
   @IsInt()
@@ -68,8 +146,9 @@ export class UpdateModuleDto {
   title?: string;
 
   @IsOptional()
-  @IsObject()
-  content?: Record<string, any>;
+  @ValidateNested()
+  @Type(() => ModuleContentDto)
+  content?: ModuleContentDto;
 
   @IsOptional()
   @IsInt()
