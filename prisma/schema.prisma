@@ -643,6 +643,7 @@ model Nomination {
   @@index([createdAt])
   @@map("nominations")
 }
+model ActivityLog {
   id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
