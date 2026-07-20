@@ -12,7 +12,7 @@ app.enableCors({
     "http://localhost:5173",
     "https://gmbtefro.vercel.app",
     "https://gmbtefro-pfst.vercel.app", // optional if you still use preview deployments
-    "https://hof-ochre.vercel.app", // hof now calls this API directly for tributes/nominations
+    "https://hofgmbte.vercel.app", // hof now calls this API directly for tributes/nominations
   ],
   credentials: true,
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
