@@ -237,7 +237,7 @@ export class CoursesService {
           courseId,
           slug,
           title: dto.title,
-          content: dto.content,
+          content: dto.content as unknown as Prisma.InputJsonValue, // same pattern as dto.metadata cast above
           order: dto.order ?? (await tx.module.count({ where: { courseId } })),
         },
       });
