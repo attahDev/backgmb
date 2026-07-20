@@ -51,6 +51,8 @@ model User {
   tributes          Tribute[]
   nominations       Nomination[]
   moduleProgress    ModuleProgress[]
+  greenActions      GreenAction[]
+  greenProjectSupport GreenProjectSupport[]
 
   @@map("users")
 }
@@ -462,6 +464,71 @@ model ModuleProgress {
   @@unique([userId, moduleId])
   @@index([userId])
   @@map("module_progress")
+}
+
+/** A sustainability action a user logs themselves (recycling, using
+ *  transit, energy saving, etc). Everything on the Green Impact dashboard
+ *  (CO2 tracked, points, ranking) is computed from real rows in this
+ *  table — nothing here is a fabricated number.
+ *
+ *  Point formula, picked as a reasonable, documented default rather than
+ *  guessed silently: 1 point per kg of CO2 offset, rounded to the nearest
+ *  whole point. Revisit if you want a different formula later — it's
+ *  computed in one place (GreenImpactService.pointsFor) so changing it
+ *  doesn't require a migration. */
+/** Community-nominated sustainability projects. There is no payment
+ *  processor wired in anywhere (checked — nothing in this codebase talks
+ *  to Stripe or similar), so "raisedAmountMinor" is NOT a record of real
+ *  money moving — it's an admin-editable running total, same honesty
+ *  tradeoff as everywhere else that doesn't have real billing yet.
+ *  "Supporting" a project (GreenProjectSupport) IS real — it's a genuine
+ *  user action, just not a financial transaction. Don't wire a "Pay" button
+ *  to this without adding real payment processing first — same warning as
+ *  the Hall of Fame nomination flow. */
+model GreenProject {
+  id          String @id @default(uuid())
+  title       String
+  description String
+  imageUrl    String?
+
+  goalAmountMinor   Int
+  raisedAmountMinor Int     @default(0)
+  isActive          Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supporters GreenProjectSupport[]
+
+  @@map("green_projects")
+}
+
+model GreenProjectSupport {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   GreenProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, projectId])
+  @@map("green_project_support")
+}
+
+model GreenAction {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type        String // RECYCLING | TRANSPORT | ENERGY | WASTE_REDUCTION | TREE_PLANTING | OTHER
+  description String?
+  co2OffsetKg Float
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("green_actions")
 }
 
 model CourseProgress {

@@ -29,6 +29,12 @@ import { TributesController } from './tributes/tributes.controller';
 import { NominationsService } from './nominations/nominations.service';
 import { NominationsController } from './nominations/nominations.controller';
 
+import { GreenImpactService } from './green-impact/green-impact.service';
+import { GreenImpactController } from './green-impact/green-impact.controller';
+
+import { GreenProjectsService } from './green-projects/green-projects.service';
+import { GreenProjectsController } from './green-projects/green-projects.controller';
+
 @Module({
   imports: [PrismaModule],
   controllers: [
@@ -41,6 +47,8 @@ import { NominationsController } from './nominations/nominations.controller';
     DashboardController,
     TributesController,
     NominationsController,
+    GreenImpactController,
+    GreenProjectsController,
   ],
   providers: [
     ActivityService,
@@ -52,6 +60,8 @@ import { NominationsController } from './nominations/nominations.controller';
     DashboardService,
     TributesService,
     NominationsService,
+    GreenImpactService,
+    GreenProjectsService,
     RolesGuard,
   ],
   exports: [ActivityService],

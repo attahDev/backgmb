@@ -72,7 +72,7 @@ from typing import Any
 import requests
 import yaml
 
-API_BASE = os.environ.get("GMBTE_API_BASE", "https://gmbtebac.onrender.com")
+API_BASE = os.environ.get("GMBTE_API_BASE", "https://backgmb.onrender.com")
 
 
 def slugify(title: str) -> str:
