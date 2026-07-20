@@ -10,8 +10,7 @@ async function bootstrap() {
 app.enableCors({
   origin: [
     "http://localhost:5173",
-    "https://gmbtefro.vercel.app",
-    "https://gmbtefro-pfst.vercel.app", // optional if you still use preview deployments
+    "https://frogmbte.vercel.app",
     "https://hofgmbte.vercel.app", // hof now calls this API directly for tributes/nominations
   ],
   credentials: true,
