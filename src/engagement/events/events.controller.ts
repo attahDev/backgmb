@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -14,8 +14,8 @@ export class EventsController {
   constructor(private eventsService: EventsService) {}
 
   @Get()
-  findUpcoming() {
-    return this.eventsService.findUpcoming();
+  findUpcoming(@Query('includeInactive') includeInactive?: string) {
+    return this.eventsService.findUpcoming(includeInactive === 'true');
   }
 
   /** Powers the "My Events" dashboard — Upcoming / Attended / Saved tabs and

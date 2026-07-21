@@ -21,6 +21,10 @@ export class CreateEventDto {
   @IsString()
   mode?: string;
 
+  @IsOptional()
+  @IsString()
+  link?: string;
+
   @IsDateString()
   startsAt: string;
 

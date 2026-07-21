@@ -21,7 +21,7 @@ export class CoursesService {
     const [courses, progress] = await Promise.all([
       this.prisma.course.findMany({
         where: { ...(includeInactive ? {} : { isActive: true }), ...(category ? { category } : {}) },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
       }),
       this.prisma.courseProgress.findMany({ where: { userId } }),
     ]);
@@ -206,6 +206,8 @@ export class CoursesService {
         title: dto.title,
         description: dto.description,
         category: dto.category,
+        tags: dto.tags ?? [],
+        isFeatured: dto.isFeatured ?? false,
         metadata: (dto.metadata as Prisma.InputJsonValue) ?? undefined,
         totalModules: 0,
       },
@@ -221,6 +223,8 @@ export class CoursesService {
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.metadata !== undefined ? { metadata: dto.metadata as Prisma.InputJsonValue } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+        ...(dto.isFeatured !== undefined ? { isFeatured: dto.isFeatured } : {}),
       },
     });
   }

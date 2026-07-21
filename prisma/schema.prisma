@@ -396,6 +396,15 @@ model Course {
   title       String
   description String?
   category    String?
+  // Free-form sub-tags for sorting/filtering WITHIN a category — e.g.
+  // ["Web Development", "Beginner"] on an education course, or
+  // ["Energy", "Certification"] on a climate one. Separate from `category`,
+  // which only ever holds "education" | "climate" and decides which page
+  // (Academy vs Green Impact) the course shows up on at all.
+  tags        String[] @default([])
+  // Admin-curated spotlight — lets you run 300 courses but only surface a
+  // handful on the toolkit landing pages, same mechanism as Event.isFeatured.
+  isFeatured  Boolean  @default(false)
   // Extra display fields that used to live hardcoded in
   // sustainabilityCourses.ts (image, duration, contactHours, mode, level,
   // certificateAvailable, learningOutcomes, shortDescription). Kept as JSON
@@ -560,6 +569,10 @@ model Event {
   // rather than an enum, so the admin event form can add new modes without
   // a migration. Frontend badges default to 'In-Person' when unset.
   mode        String?
+  // Optional external URL — registration page, Zoom/Meet link, Eventbrite,
+  // etc. Purely optional so events with no online component (walk-in
+  // workshops) don't need one.
+  link        String?
   startsAt    DateTime
   endsAt      DateTime?
   isActive    Boolean   @default(true)

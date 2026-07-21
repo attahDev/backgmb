@@ -30,6 +30,16 @@ export class CreateCourseDto {
   @IsIn(['education', 'climate'])
   category: string;
 
+  /** Free-form sub-tags for sorting/filtering within a category. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isFeatured?: boolean;
+
   @IsOptional()
   @IsObject()
   metadata?: CourseMetadataDto;
@@ -40,6 +50,8 @@ export class UpdateCourseDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsObject() metadata?: CourseMetadataDto;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
+  @IsOptional() @IsBoolean() isFeatured?: boolean;
 }
 
 export class SectionMediaDto {

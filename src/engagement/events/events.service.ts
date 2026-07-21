@@ -18,9 +18,9 @@ export class EventsService {
     private activityService: ActivityService,
   ) {}
 
-  async findUpcoming() {
+  async findUpcoming(includeInactive = false) {
     return this.prisma.event.findMany({
-      where: { isActive: true, startsAt: { gte: new Date() } },
+      where: { ...(includeInactive ? {} : { isActive: true, startsAt: { gte: new Date() } }) },
       // Featured first regardless of date, then soonest-first within each
       // group — an admin-pinned event should lead the dashboard even if a
       // closer, unfeatured event exists.
@@ -130,6 +130,7 @@ export class EventsService {
         location: dto.location,
         imageUrl: dto.imageUrl,
         mode: dto.mode,
+        link: dto.link,
         startsAt: new Date(dto.startsAt),
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
@@ -150,6 +151,7 @@ export class EventsService {
         ...(dto.location !== undefined && { location: dto.location }),
         ...(dto.imageUrl !== undefined && { imageUrl: dto.imageUrl }),
         ...(dto.mode !== undefined && { mode: dto.mode }),
+        ...(dto.link !== undefined && { link: dto.link }),
         ...(dto.startsAt !== undefined && { startsAt: new Date(dto.startsAt) }),
         ...(dto.endsAt !== undefined && { endsAt: new Date(dto.endsAt) }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),

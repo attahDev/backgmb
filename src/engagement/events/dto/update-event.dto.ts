@@ -6,6 +6,7 @@ export class UpdateEventDto {
   @IsOptional() @IsString() location?: string;
   @IsOptional() @IsString() imageUrl?: string;
   @IsOptional() @IsString() mode?: string;
+  @IsOptional() @IsString() link?: string;
   @IsOptional() @IsDateString() startsAt?: string;
   @IsOptional() @IsDateString() endsAt?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
