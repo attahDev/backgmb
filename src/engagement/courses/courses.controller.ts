@@ -13,10 +13,16 @@ export class CoursesController {
   constructor(private coursesService: CoursesService) {}
 
   /** ?category=education | climate — used by Academy and Green Impact pages
-   *  respectively. Omit to get everything. */
+   *  respectively. Omit to get everything.
+   *  ?includeInactive=true — used by the admin course table, so a removed
+   *  course is still visible (and restorable) instead of just vanishing. */
   @Get()
-  findAll(@CurrentUser() user: any, @Query('category') category?: string) {
-    return this.coursesService.findAllWithProgress(user.userId, category);
+  findAll(
+    @CurrentUser() user: any,
+    @Query('category') category?: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.coursesService.findAllWithProgress(user.userId, category, includeInactive === 'true');
   }
 
   @Get(':id')

@@ -1,0 +1,3 @@
+ALTER TABLE "events" ADD COLUMN "imageUrl" TEXT;
+ALTER TABLE "events" ADD COLUMN "isFeatured" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "events" ADD COLUMN "mode" TEXT;

@@ -21,7 +21,10 @@ export class EventsService {
   async findUpcoming() {
     return this.prisma.event.findMany({
       where: { isActive: true, startsAt: { gte: new Date() } },
-      orderBy: { startsAt: 'asc' },
+      // Featured first regardless of date, then soonest-first within each
+      // group — an admin-pinned event should lead the dashboard even if a
+      // closer, unfeatured event exists.
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }],
     });
   }
 
@@ -125,9 +128,12 @@ export class EventsService {
         title: dto.title,
         description: dto.description,
         location: dto.location,
+        imageUrl: dto.imageUrl,
+        mode: dto.mode,
         startsAt: new Date(dto.startsAt),
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
+        isFeatured: dto.isFeatured ?? false,
       },
     });
   }
@@ -142,9 +148,12 @@ export class EventsService {
         ...(dto.title !== undefined && { title: dto.title }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.location !== undefined && { location: dto.location }),
+        ...(dto.imageUrl !== undefined && { imageUrl: dto.imageUrl }),
+        ...(dto.mode !== undefined && { mode: dto.mode }),
         ...(dto.startsAt !== undefined && { startsAt: new Date(dto.startsAt) }),
         ...(dto.endsAt !== undefined && { endsAt: new Date(dto.endsAt) }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.isFeatured !== undefined && { isFeatured: dto.isFeatured }),
       },
     });
   }

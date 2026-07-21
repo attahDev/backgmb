@@ -13,6 +13,14 @@ export class CreateEventDto {
   @IsString()
   location?: string;
 
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  mode?: string;
+
   @IsDateString()
   startsAt: string;
 
@@ -23,4 +31,8 @@ export class CreateEventDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isFeatured?: boolean;
 }

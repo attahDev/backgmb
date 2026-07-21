@@ -53,6 +53,7 @@ model User {
   moduleProgress    ModuleProgress[]
   greenActions      GreenAction[]
   greenProjectSupport GreenProjectSupport[]
+  spotlightLikes      SpotlightLike[]
 
   @@map("users")
 }
@@ -554,9 +555,18 @@ model Event {
   title       String
   description String?
   location    String?
+  imageUrl    String?
+  // 'Virtual' | 'In-Person' | 'Hybrid' — free-form like Course.category
+  // rather than an enum, so the admin event form can add new modes without
+  // a migration. Frontend badges default to 'In-Person' when unset.
+  mode        String?
   startsAt    DateTime
   endsAt      DateTime?
   isActive    Boolean   @default(true)
+  // Featured events are pinned first in findUpcoming(), ahead of anything
+  // sorted purely by date — lets an admin put one event front-and-centre
+  // on the dashboard regardless of how soon it is.
+  isFeatured  Boolean   @default(false)
 
   createdAt DateTime @default(now())
 
@@ -667,12 +677,32 @@ model SpotlightStory {
   authorRole  String
   avatarColor String? @default("bg-red-600")
   imageUrl    String?
+  // Denormalized count, kept in sync by CommunityService.like()/unlike() —
+  // same reasoning as Course.totalModules: list views read this straight
+  // off the row instead of a COUNT() join on every request. Source of
+  // truth for "did THIS user like it" is the SpotlightLike join table.
   likes       Int     @default(0)
   comments    Int     @default(0)
   isPublished Boolean @default(true)
 
   createdAt DateTime @default(now())
 
+  likedBy SpotlightLike[]
+
   @@index([isPublished])
   @@map("spotlight_stories")
+}
+
+model SpotlightLike {
+  id      String         @id @default(uuid())
+  userId  String
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyId String
+  story   SpotlightStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, storyId])
+  @@index([storyId])
+  @@map("spotlight_likes")
 }

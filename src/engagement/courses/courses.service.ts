@@ -14,11 +14,13 @@ export class CoursesService {
 
   /** Course catalogue joined with the current user's own progress, if any.
    *  Optionally filtered by category ('education' | 'climate') so the
-   *  Academy and Green Impact pages only ever see their own courses. */
-  async findAllWithProgress(userId: string, category?: string) {
+   *  Academy and Green Impact pages only ever see their own courses.
+   *  includeInactive lets the admin course table show removed (isActive:
+   *  false) courses too, so "remove" is reversible instead of a black hole. */
+  async findAllWithProgress(userId: string, category?: string, includeInactive = false) {
     const [courses, progress] = await Promise.all([
       this.prisma.course.findMany({
-        where: { isActive: true, ...(category ? { category } : {}) },
+        where: { ...(includeInactive ? {} : { isActive: true }), ...(category ? { category } : {}) },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.courseProgress.findMany({ where: { userId } }),
