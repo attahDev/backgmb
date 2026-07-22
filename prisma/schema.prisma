@@ -40,7 +40,6 @@ model User {
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
   comments Comment[]
-  spotlightStories SpotlightStory[]
 
   brandAssets          BrandAsset[]
   chatSessions         ChatSession[]
