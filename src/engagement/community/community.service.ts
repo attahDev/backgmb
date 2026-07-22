@@ -16,7 +16,7 @@ export class CommunityService {
 
   /**
    * The community feed. A mix of admin-authored editorial spotlights
-   * (authorId null, status defaults APPROVED) and user-submitted shoutouts
+   * (userId null, status defaults APPROVED) and user-submitted shoutouts
    * that have cleared moderation (status APPROVED). PENDING/REJECTED posts
    * never show up here — only in the author's own `findMine()` and the
    * admin queue.
@@ -49,7 +49,7 @@ export class CommunityService {
    *  is still pending or was rejected — not just have it silently vanish. */
   async findMine(userId: string) {
     return this.prisma.spotlightStory.findMany({
-      where: { authorId: userId },
+      where: { userId: userId },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -131,7 +131,7 @@ export class CommunityService {
         authorRole: user.organization || 'Community Member',
         avatarColor,
         imageUrl,
-        authorId: userId,
+        userId: userId,
         status: PostStatus.PENDING,
       },
     });
@@ -140,7 +140,7 @@ export class CommunityService {
       category: NotificationCategory.COMMUNITY,
       title: 'Your post is awaiting approval',
       body: `"${post.title}" will appear in the community feed once an admin reviews it.`,
-      metadata: { postId: post.id },
+      metadata: { storyId: post.id },
     });
 
     await this.notificationsService.notifyAdmins({
@@ -149,7 +149,7 @@ export class CommunityService {
       body: `${post.authorName} submitted "${post.title}".`,
       actionLabel: 'Review',
       actionUrl: '/dashboard/admin/community',
-      metadata: { postId: post.id, userId },
+      metadata: { storyId: post.id, userId },
     });
 
     return post;
@@ -160,40 +160,40 @@ export class CommunityService {
   /** Comments are only readable/postable on a live (APPROVED) post — a
    *  pending or rejected post isn't public yet, so its comment thread
    *  shouldn't be either. */
-  async findComments(postId: string) {
-    const post = await this.prisma.spotlightStory.findUnique({ where: { id: postId } });
+  async findComments(storyId: string) {
+    const post = await this.prisma.spotlightStory.findUnique({ where: { id: storyId } });
     if (!post || post.status !== PostStatus.APPROVED) throw new NotFoundException('Post not found');
 
     return this.prisma.comment.findMany({
-      where: { postId },
+      where: { storyId },
       orderBy: { createdAt: 'asc' },
       include: { author: { select: { firstname: true, lastname: true } } },
     });
   }
 
-  async addComment(userId: string, postId: string, content: string) {
+  async addComment(userId: string, storyId: string, content: string) {
     if (!content?.trim()) throw new BadRequestException('Comment cannot be empty');
 
-    const post = await this.prisma.spotlightStory.findUnique({ where: { id: postId } });
+    const post = await this.prisma.spotlightStory.findUnique({ where: { id: storyId } });
     if (!post || post.status !== PostStatus.APPROVED) throw new NotFoundException('Post not found');
 
     const [comment] = await this.prisma.$transaction([
       this.prisma.comment.create({
-        data: { postId, authorId: userId, content: content.trim() },
+        data: { storyId, userId: userId, content: content.trim() },
         include: { author: { select: { firstname: true, lastname: true } } },
       }),
-      this.prisma.spotlightStory.update({ where: { id: postId }, data: { comments: { increment: 1 } } }),
+      this.prisma.spotlightStory.update({ where: { id: storyId }, data: { comments: { increment: 1 } } }),
     ]);
 
     // Let the post's author know someone engaged with their shoutout —
     // skip it if they're commenting on their own post.
-    if (post.authorId && post.authorId !== userId) {
-      await this.notificationsService.notifyUser(post.authorId, {
+    if (post.userId && post.userId !== userId) {
+      await this.notificationsService.notifyUser(post.userId, {
         category: NotificationCategory.COMMUNITY,
         title: `New comment on "${post.title}"`,
         actionLabel: 'View',
         actionUrl: '/dashboard/community',
-        metadata: { postId },
+        metadata: { storyId },
       });
     }
 
@@ -206,12 +206,12 @@ export class CommunityService {
   async deleteOwnComment(userId: string, commentId: string) {
     const comment = await this.prisma.comment.findUnique({ where: { id: commentId } });
     if (!comment) throw new NotFoundException('Comment not found');
-    if (comment.authorId !== userId) throw new ForbiddenException('Not your comment');
+    if (comment.userId !== userId) throw new ForbiddenException('Not your comment');
 
     await this.prisma.$transaction([
       this.prisma.comment.delete({ where: { id: commentId } }),
       this.prisma.spotlightStory.update({
-        where: { id: comment.postId },
+        where: { id: comment.storyId },
         data: { comments: { decrement: 1 } },
       }),
     ]);
@@ -228,7 +228,7 @@ export class CommunityService {
     await this.prisma.$transaction([
       this.prisma.comment.delete({ where: { id: commentId } }),
       this.prisma.spotlightStory.update({
-        where: { id: comment.postId },
+        where: { id: comment.storyId },
         data: { comments: { decrement: 1 } },
       }),
     ]);
@@ -245,38 +245,38 @@ export class CommunityService {
     });
   }
 
-  async approve(postId: string) {
+  async approve(storyId: string) {
     const post = await this.prisma.spotlightStory.update({
-      where: { id: postId },
+      where: { id: storyId },
       data: { status: PostStatus.APPROVED },
     });
 
-    if (post.authorId) {
-      await this.notificationsService.notifyUser(post.authorId, {
+    if (post.userId) {
+      await this.notificationsService.notifyUser(post.userId, {
         category: NotificationCategory.COMMUNITY,
         title: `Your post is live: "${post.title}"`,
         body: 'It now shows up in the community feed for everyone.',
         actionLabel: 'View Post',
         actionUrl: '/dashboard/community',
-        metadata: { postId },
+        metadata: { storyId },
       });
     }
 
     return post;
   }
 
-  async reject(postId: string, reason?: string) {
+  async reject(storyId: string, reason?: string) {
     const post = await this.prisma.spotlightStory.update({
-      where: { id: postId },
+      where: { id: storyId },
       data: { status: PostStatus.REJECTED },
     });
 
-    if (post.authorId) {
-      await this.notificationsService.notifyUser(post.authorId, {
+    if (post.userId) {
+      await this.notificationsService.notifyUser(post.userId, {
         category: NotificationCategory.COMMUNITY,
         title: `Your post wasn't approved: "${post.title}"`,
         body: reason || "It didn't meet the community guidelines.",
-        metadata: { postId },
+        metadata: { storyId },
       });
     }
 
