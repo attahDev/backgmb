@@ -39,6 +39,7 @@ model User {
   verificationSessions VerificationSession[]
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
+  comments Comment[]
 
   brandAssets BrandAsset[]
     chatSessions         ChatSession[]
@@ -810,29 +811,61 @@ model ActivityLog {
 }
 
 model SpotlightStory {
-  id          String  @id @default(uuid())
+  id          String @id @default(uuid())
+
+  authorId String?
+  author   User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
   title       String
   description String
-  authorName  String
-  authorRole  String
+
+  authorName String
+  authorRole String
+
   avatarColor String? @default("bg-red-600")
-  imageUrl    String?
-  // Denormalized count, kept in sync by CommunityService.like()/unlike() —
-  // same reasoning as Course.totalModules: list views read this straight
-  // off the row instead of a COUNT() join on every request. Source of
-  // truth for "did THIS user like it" is the SpotlightLike join table.
-  likes       Int     @default(0)
-  comments    Int     @default(0)
-  isPublished Boolean @default(true)
+  imageUrl String?
+
+  status PostStatus @default(PENDING)
+
+  likes Int @default(0)
+  comments Int @default(0)
+
+  isPublished Boolean @default(false)
 
   createdAt DateTime @default(now())
 
   likedBy SpotlightLike[]
+  commentList Comment[]
 
+  @@index([status])
   @@index([isPublished])
   @@map("spotlight_stories")
 }
+model Comment {
+  id String @id @default(uuid())
 
+  storyId String
+  story SpotlightStory @relation(
+    fields: [storyId],
+    references: [id],
+    onDelete: Cascade
+  )
+
+  userId String?
+  user User? @relation(
+    fields: [userId],
+    references: [id],
+    onDelete: SetNull
+  )
+
+  content String
+
+  createdAt DateTime @default(now())
+
+
+  @@index([storyId])
+  @@map("comments")
+}
 model SpotlightLike {
   id      String         @id @default(uuid())
   userId  String
@@ -852,6 +885,8 @@ model SpotlightLike {
  *  USER-audience rows are owned by `userId`; ADMIN-audience rows are shared
  *  (userId left null) so any admin marking one read clears it for all admins,
  *  matching NotificationsService's markReadAdmin/markAllReadAdmin. */
+
+
 model Notification {
   id String @id @default(uuid())
 
@@ -898,3 +933,11 @@ enum NotificationCategory {
   GREEN_IMPACT
   SYSTEM
 }
+
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+
