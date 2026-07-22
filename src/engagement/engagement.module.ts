@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
+
 import { PrismaModule } from '../prisma/prisma.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { RolesGuard } from '../guards/roles.guard';
@@ -14,6 +15,7 @@ import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
 import { OpportunitiesService } from './opportunities/opportunities.service';
+import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
 
 import { CoursesService } from './courses/courses.service';
@@ -36,6 +38,7 @@ import { NominationsController } from './nominations/nominations.controller';
 
 import { GreenImpactService } from './green-impact/green-impact.service';
 import { GreenImpactController } from './green-impact/green-impact.controller';
+
 import { ClimateDataService } from './green-impact/climate-data.service';
 
 import { ExchangeService } from './green-impact/exchange.service';
@@ -44,8 +47,14 @@ import { ExchangeController } from './green-impact/exchange.controller';
 import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
+
 @Module({
-  imports: [PrismaModule, HttpModule, UploadsModule],
+  imports: [
+    PrismaModule,
+    HttpModule,
+    UploadsModule,
+  ],
+
   controllers: [
     ActivityController,
     NotificationsController,
@@ -61,23 +70,41 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ExchangeController,
     GreenProjectsController,
   ],
+
   providers: [
     ActivityService,
     NotificationsService,
+
     MentorsService,
+
     OpportunitiesService,
+    OpportunitiesSyncService,
+
     CoursesService,
+
     EventsService,
+
     CommunityService,
+
     DashboardService,
+
     TributesService,
+
     NominationsService,
+
     GreenImpactService,
     ClimateDataService,
+
     ExchangeService,
+
     GreenProjectsService,
+
     RolesGuard,
   ],
-  exports: [ActivityService, NotificationsService],
+
+  exports: [
+    ActivityService,
+    NotificationsService,
+  ],
 })
 export class EngagementModule {}
