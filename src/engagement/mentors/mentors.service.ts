@@ -1,17 +1,17 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
-import { NotificationsService } from '../notifications/notifications.service';
-import { MentorConnectionStatus, NotificationCategory } from '@prisma/client';
+import { MentorConnectionStatus, UserRole } from '@prisma/client';
 import { CreateMentorDto } from './dto/create-mentor.dto';
 import { UpdateMentorDto } from './dto/update-mentor.dto';
+import { PromoteMentorDto } from './dto/promote-mentor.dto';
+import { UpdateMenteeConnectionDto } from './dto/update-mentee-connection.dto';
 
 @Injectable()
 export class MentorsService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
-    private notificationsService: NotificationsService,
   ) {}
 
   /** Public mentor directory (used by "Find a Mentor"). */
@@ -62,24 +62,6 @@ export class MentorsService {
       `Requested a connection with ${mentor.name}`,
       { mentorId },
     );
-
-    await this.notificationsService.notifyUser(userId, {
-      category: NotificationCategory.COMMUNITY,
-      title: `Connection requested: ${mentor.name}`,
-      body: `We'll notify you once ${mentor.name} responds.`,
-      actionLabel: 'View Request',
-      actionUrl: '/dashboard/community',
-      metadata: { mentorId, connectionId: connection.id },
-    });
-
-    await this.notificationsService.notifyAdmins({
-      category: NotificationCategory.COMMUNITY,
-      title: `New mentor connection request`,
-      body: `A user requested to connect with ${mentor.name}.`,
-      actionLabel: 'Review',
-      actionUrl: '/dashboard/admin/mentors',
-      metadata: { mentorId, connectionId: connection.id, userId },
-    });
 
     return connection;
   }
@@ -162,5 +144,144 @@ export class MentorsService {
     const mentor = await this.prisma.mentor.findUnique({ where: { id } });
     if (!mentor) throw new NotFoundException('Mentor not found');
     return this.prisma.mentor.update({ where: { id }, data: { isActive: false } });
+  }
+
+  // ───────────────────────── Admin: promote/demote a real user to mentor ─────────────────────────
+
+  /** Admin picks an EXISTING user — they keep their own email/password login.
+   *  This sets User.role = MENTOR and creates (or re-links) their Mentor
+   *  profile row so they can log in and see "My Mentees". */
+  async promoteToMentor(dto: PromoteMentorDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: dto.userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const existingProfile = await this.prisma.mentor.findUnique({ where: { userId: dto.userId } });
+
+    const [, mentor] = await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: dto.userId }, data: { role: UserRole.MENTOR } }),
+      existingProfile
+        ? this.prisma.mentor.update({
+            where: { userId: dto.userId },
+            data: {
+              role: dto.roleTitle,
+              company: dto.company,
+              avatarUrl: dto.avatarUrl,
+              bio: dto.bio,
+              skills: dto.skills ?? existingProfile.skills,
+              isActive: true,
+            },
+          })
+        : this.prisma.mentor.create({
+            data: {
+              userId: dto.userId,
+              name: `${user.firstname} ${user.lastname}`.trim(),
+              role: dto.roleTitle,
+              company: dto.company,
+              avatarUrl: dto.avatarUrl,
+              bio: dto.bio,
+              skills: dto.skills ?? [],
+              isActive: true,
+            },
+          }),
+    ]);
+
+    return mentor;
+  }
+
+  /** Admin revokes mentor status: role reverts, profile is deactivated (not
+   *  deleted) so existing connection/session history stays intact. */
+  async demoteMentor(userId: string) {
+    const mentor = await this.prisma.mentor.findUnique({ where: { userId } });
+    if (!mentor) throw new NotFoundException('This user has no mentor profile');
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: userId }, data: { role: UserRole.STUDENT } }),
+      this.prisma.mentor.update({ where: { userId }, data: { isActive: false } }),
+    ]);
+
+    return { message: 'Mentor status revoked' };
+  }
+
+  // ───────────────────────── Mentor's own view: "My Mentees" ─────────────────────────
+
+  private async getMentorProfileOrThrow(userId: string) {
+    const mentor = await this.prisma.mentor.findUnique({ where: { userId } });
+    if (!mentor) throw new ForbiddenException('This account has no mentor profile');
+    return mentor;
+  }
+
+  async findMyMentees(userId: string) {
+    const mentor = await this.getMentorProfileOrThrow(userId);
+
+    const connections = await this.prisma.mentorConnection.findMany({
+      where: { mentorId: mentor.id },
+      include: {
+        user: {
+          select: { id: true, firstname: true, lastname: true, email: true, organization: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return connections.map((c) => ({
+      connectionId: c.id,
+      status: c.status,
+      sessionsCompleted: c.sessionsCompleted,
+      nextSessionAt: c.nextSessionAt,
+      updatedAt: c.updatedAt,
+      mentee: c.user,
+    }));
+  }
+
+  /** Mentor accepts/declines a pending request, logs a session, or schedules the next one. */
+  async updateMenteeConnection(userId: string, connectionId: string, dto: UpdateMenteeConnectionDto) {
+    const mentor = await this.getMentorProfileOrThrow(userId);
+
+    const connection = await this.prisma.mentorConnection.findUnique({ where: { id: connectionId } });
+    if (!connection || connection.mentorId !== mentor.id) {
+      throw new NotFoundException('Mentee connection not found');
+    }
+
+    return this.prisma.mentorConnection.update({
+      where: { id: connectionId },
+      data: {
+        ...(dto.status !== undefined && { status: dto.status }),
+        ...(dto.sessionsCompleted !== undefined && { sessionsCompleted: dto.sessionsCompleted }),
+        ...(dto.nextSessionAt !== undefined && { nextSessionAt: new Date(dto.nextSessionAt) }),
+      },
+      include: { user: { select: { id: true, firstname: true, lastname: true, email: true } } },
+    });
+  }
+
+  // ───────────────────────── Mentor <-> mentee direct messaging ─────────────────────────
+
+  /** Confirms `userId` is either side of the connection before touching messages. */
+  private async assertConnectionMember(connectionId: string, userId: string) {
+    const connection = await this.prisma.mentorConnection.findUnique({
+      where: { id: connectionId },
+      include: { mentor: true },
+    });
+    if (!connection) throw new NotFoundException('Connection not found');
+
+    const isMentee = connection.userId === userId;
+    const isMentor = connection.mentor.userId === userId;
+    if (!isMentee && !isMentor) throw new ForbiddenException('Not part of this connection');
+
+    return connection;
+  }
+
+  async getMessages(connectionId: string, userId: string) {
+    await this.assertConnectionMember(connectionId, userId);
+    return this.prisma.menteeMessage.findMany({
+      where: { connectionId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async sendMessage(connectionId: string, userId: string, content: string) {
+    await this.assertConnectionMember(connectionId, userId);
+    return this.prisma.menteeMessage.create({
+      data: { connectionId, senderId: userId, content },
+    });
   }
 }

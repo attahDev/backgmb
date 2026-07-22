@@ -44,6 +44,10 @@ model User {
     chatSessions         ChatSession[]
 
   mentorConnections MentorConnection[]
+  // Present only when this user has been promoted to MENTOR by an admin —
+  // links their login to the (previously login-less) Mentor directory row.
+  mentorProfile     Mentor?
+  menteeMessages    MenteeMessage[]
   courseProgress    CourseProgress[]
   eventAttendance   EventAttendance[]
   userBadges        UserBadge[]
@@ -55,9 +59,6 @@ model User {
   greenProjectSupport GreenProjectSupport[]
   spotlightLikes      SpotlightLike[]
   creditTransactions  CreditTransaction[]
-  notifications       Notification[]
-  communityPosts      SpotlightStory[]
-  comments            Comment[]
 
   @@map("users")
 }
@@ -66,6 +67,7 @@ enum UserRole {
   STUDENT
   PROFESSIONAL
   ENGINEER
+  MENTOR
   ADMIN
   OTHER
 }
@@ -343,6 +345,12 @@ model Mentor {
   skills    String[]
   isActive  Boolean @default(true)
 
+  // Nullable: older/seed directory rows may still have no linked login.
+  // When set, this Mentor IS a real User (role: MENTOR) who can log in
+  // and see their own "My Mentees" dashboard.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -370,6 +378,8 @@ model MentorConnection {
   sessionsCompleted Int                    @default(0)
   nextSessionAt     DateTime?
 
+  messages MenteeMessage[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -378,29 +388,58 @@ model MentorConnection {
   @@map("mentor_connections")
 }
 
+/** Direct mentor <-> mentee messaging within a connection (distinct from
+ *  MentorChat/MentorMessage, which back the AI mentor assistant). */
+model MenteeMessage {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  content String
+
+  createdAt DateTime @default(now())
+
+  @@index([connectionId])
+  @@map("mentee_messages")
+}
+
 model Opportunity {
   id          String   @id @default(uuid())
+
   title       String
   description String?
+
   company     String
+
   category    String?
   location    String?
   type        String?
+
   source      String   @default("MANUAL")
+
   provider    String?
   externalId  String?
+
   url         String?
   applyUrl    String?
+
   isFeatured  Boolean  @default(false)
   isActive    Boolean  @default(true)
+
   postedAt    DateTime @default(now())
 
   @@unique([provider, externalId], name: "provider_externalId")
+
   @@index([category])
   @@index([isFeatured])
   @@index([isActive])
+
   @@map("opportunities")
 }
+
 model Course {
   id          String  @id @default(uuid())
   // Stable, human-readable identifier used in frontend URLs
@@ -769,15 +808,6 @@ model ActivityLog {
   @@map("activity_logs")
 }
 
-// PENDING  -> user-submitted, awaiting admin review (not visible in the feed)
-// APPROVED -> visible in the community feed
-// REJECTED -> hidden, kept around so the author can see why/that it was rejected
-enum PostStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
 model SpotlightStory {
   id          String  @id @default(uuid())
   title       String
@@ -791,47 +821,15 @@ model SpotlightStory {
   // off the row instead of a COUNT() join on every request. Source of
   // truth for "did THIS user like it" is the SpotlightLike join table.
   likes       Int     @default(0)
-  // Kept in sync by CommunityService.addComment()/deleteComment() the same
-  // way `likes` is — real rows live in Comment, source of truth for "did
-  // THIS user comment" style checks, this is just the display count.
   comments    Int     @default(0)
-
-  // Null = admin-authored editorial content (created before user posting
-  // existed, or still added by an admin directly). Set = a user's own
-  // community post/shoutout.
-  authorId String?
-  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
-
-  // Admin-authored rows default APPROVED so nothing already live gets
-  // hidden by this migration. User-submitted posts are created PENDING
-  // by CommunityService.createPost() and only appear in the feed once
-  // an admin approves them.
-  status PostStatus @default(APPROVED)
+  isPublished Boolean @default(true)
 
   createdAt DateTime @default(now())
 
-  likedBy      SpotlightLike[]
-  postComments Comment[]
+  likedBy SpotlightLike[]
 
-  @@index([status])
-  @@index([authorId])
+  @@index([isPublished])
   @@map("spotlight_stories")
-}
-
-model Comment {
-  id     String         @id @default(uuid())
-  postId String
-  post   SpotlightStory @relation(fields: [postId], references: [id], onDelete: Cascade)
-
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
-
-  content String
-
-  createdAt DateTime @default(now())
-
-  @@index([postId])
-  @@map("comments")
 }
 
 model SpotlightLike {
@@ -846,59 +844,4 @@ model SpotlightLike {
   @@unique([userId, storyId])
   @@index([storyId])
   @@map("spotlight_likes")
-}
-
-// Real per-user + admin notification feed. Distinct from ActivityLog:
-// ActivityLog is a one-way "what did I do" history; Notification is a
-// two-way, readable/dismissable alert that other services push into when
-// something happens that the recipient should be told about.
-//
-// audience USER  -> userId is set, shows up in that user's bell/notifications page
-// audience ADMIN -> userId is null, shows up on every admin's notifications feed
-enum NotificationAudience {
-  USER
-  ADMIN
-}
-
-// Mirrors the filter chips on the Notifications page.
-enum NotificationCategory {
-  OPPORTUNITIES
-  JOBS_COS
-  FELLOWSHIP
-  ACADEMY
-  HALL_OF_FAME
-  EVENTS
-  AI_AGENTS
-  COMMUNITY
-  GREEN_IMPACT
-  DIGITAL_TRUST
-  SYSTEM
-}
-
-model Notification {
-  id       String               @id @default(uuid())
-  audience NotificationAudience @default(USER)
-  userId   String?
-  user     User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  category NotificationCategory @default(SYSTEM)
-  title    String
-  body     String?
-
-  // Optional CTA rendered as the pill button ("View Opportunity", "Vote now"...)
-  actionLabel String?
-  actionUrl   String?
-
-  isRead Boolean @default(false)
-  // Free-form context (e.g. { storyId, opportunityId }) for anything the
-  // frontend or a future notification-click handler needs beyond actionUrl.
-  metadata Json?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([audience])
-  @@index([isRead])
-  @@index([createdAt])
-  @@map("notifications")
 }
