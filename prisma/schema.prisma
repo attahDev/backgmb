@@ -376,15 +376,21 @@ model MentorConnection {
 }
 
 model Opportunity {
-  id       String    @id @default(uuid())
-  title    String
-  company  String
-  location String?
-  type     String?
-  url      String?
-  postedAt DateTime  @default(now())
-  isActive Boolean   @default(true)
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  company     String
+  category    String?
+  location    String?
+  type        String?
+  source      String   @default("MANUAL")
+  url         String?
+  isFeatured  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  postedAt    DateTime @default(now())
 
+  @@index([category])
+  @@index([isFeatured])
   @@index([isActive])
   @@map("opportunities")
 }
