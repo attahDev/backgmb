@@ -39,7 +39,8 @@ model User {
   verificationSessions VerificationSession[]
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
-  comments             Comment[]
+  comments Comment[]
+  spotlightStories SpotlightStory[]
 
   brandAssets          BrandAsset[]
   chatSessions         ChatSession[]
