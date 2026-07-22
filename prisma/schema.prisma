@@ -44,23 +44,22 @@ model User {
   brandAssets          BrandAsset[]
   chatSessions         ChatSession[]
 
-  mentorConnections MentorConnection[]
-  // Present only when this user has been promoted to MENTOR by an admin —
-  // links their login to the (previously login-less) Mentor directory row.
-  mentorProfile     Mentor?
-  menteeMessages    MenteeMessage[]
-  courseProgress    CourseProgress[]
-  eventAttendance   EventAttendance[]
-  userBadges        UserBadge[]
-  activityLogs      ActivityLog[]
-  tributes          Tribute[]
-  nominations       Nomination[]
-  moduleProgress    ModuleProgress[]
-  greenActions      GreenAction[]
-  greenProjectSupport GreenProjectSupport[]
-  spotlightLikes      SpotlightLike[]
-  creditTransactions  CreditTransaction[]
-  notifications       Notification[]
+  mentorConnections     MentorConnection[]
+  mentorProfile         Mentor?
+  menteeMessages        MenteeMessage[]
+  courseProgress        CourseProgress[]
+  eventAttendance       EventAttendance[]
+  userBadges            UserBadge[]
+  activityLogs          ActivityLog[]
+  tributes              Tribute[]
+  nominations           Nomination[]
+  spotlightStories      SpotlightStory[]
+  moduleProgress        ModuleProgress[]
+  greenActions          GreenAction[]
+  greenProjectSupport   GreenProjectSupport[]
+  spotlightLikes        SpotlightLike[]
+  creditTransactions    CreditTransaction[]
+  notifications         Notification[]
 
   @@map("users")
 }
