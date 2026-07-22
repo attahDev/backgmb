@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
-import { MentorConnectionStatus } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { MentorConnectionStatus, NotificationCategory } from '@prisma/client';
 import { CreateMentorDto } from './dto/create-mentor.dto';
 import { UpdateMentorDto } from './dto/update-mentor.dto';
 
@@ -10,6 +11,7 @@ export class MentorsService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private notificationsService: NotificationsService,
   ) {}
 
   /** Public mentor directory (used by "Find a Mentor"). */
@@ -60,6 +62,24 @@ export class MentorsService {
       `Requested a connection with ${mentor.name}`,
       { mentorId },
     );
+
+    await this.notificationsService.notifyUser(userId, {
+      category: NotificationCategory.COMMUNITY,
+      title: `Connection requested: ${mentor.name}`,
+      body: `We'll notify you once ${mentor.name} responds.`,
+      actionLabel: 'View Request',
+      actionUrl: '/dashboard/community',
+      metadata: { mentorId, connectionId: connection.id },
+    });
+
+    await this.notificationsService.notifyAdmins({
+      category: NotificationCategory.COMMUNITY,
+      title: `New mentor connection request`,
+      body: `A user requested to connect with ${mentor.name}.`,
+      actionLabel: 'Review',
+      actionUrl: '/dashboard/admin/mentors',
+      metadata: { mentorId, connectionId: connection.id, userId },
+    });
 
     return connection;
   }

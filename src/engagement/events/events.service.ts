@@ -1,6 +1,8 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationCategory } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 
@@ -16,6 +18,7 @@ export class EventsService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async findUpcoming(includeInactive = false) {
@@ -117,10 +120,21 @@ export class EventsService {
     });
     if (existing) return existing;
 
-    return this.prisma.eventAttendance.create({
+    const attendance = await this.prisma.eventAttendance.create({
       data: { userId, eventId, status: ATTENDANCE_STATUS.SAVED },
       include: { event: true },
     });
+
+    await this.notificationsService.notifyUser(userId, {
+      category: NotificationCategory.EVENTS,
+      title: `Saved: ${event.title}`,
+      body: `Event saved to My Events.`,
+      actionLabel: 'View Event',
+      actionUrl: `/dashboard/events/${eventId}`,
+      metadata: { eventId },
+    });
+
+    return attendance;
   }
 
   async unsave(userId: string, eventId: string) {
