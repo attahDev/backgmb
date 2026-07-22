@@ -19,6 +19,7 @@ import { OpportunitiesSyncService } from './opportunities/opportunities-sync.ser
 import { OpportunitiesController } from './opportunities/opportunities.controller';
 
 import { CoursesService } from './courses/courses.service';
+import { PdfExtractionService } from './courses/pdf-extraction.service';
 import { CoursesController } from './courses/courses.controller';
 
 import { EventsService } from './events/events.service';
@@ -58,21 +59,33 @@ import { GreenProjectsController } from './green-projects/green-projects.control
   controllers: [
     ActivityController,
     NotificationsController,
+
     MentorsController,
+
     OpportunitiesController,
+
     CoursesController,
+
     EventsController,
+
     CommunityController,
+
     DashboardController,
+
     TributesController,
+
     NominationsController,
+
     GreenImpactController,
+
     ExchangeController,
+
     GreenProjectsController,
   ],
 
   providers: [
     ActivityService,
+
     NotificationsService,
 
     MentorsService,
@@ -81,6 +94,7 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     OpportunitiesSyncService,
 
     CoursesService,
+    PdfExtractionService,
 
     EventsService,
 
