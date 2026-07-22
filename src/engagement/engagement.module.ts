@@ -116,9 +116,14 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     RolesGuard,
   ],
 
-  exports: [
+exports: [
     ActivityService,
-    NotificationsService,
+    OpportunitiesService,
+    OpportunitiesSyncService,
+    CoursesService,
+    PdfExtractionService,
+    NotificationsService
   ],
 })
+
 export class EngagementModule {}
