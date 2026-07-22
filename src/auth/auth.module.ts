@@ -10,24 +10,45 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RefreshTokenModule } from 'src/refresh-token/refresh-token.module';
 
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { RolesGuard } from '../guards/roles.guard';
+
 @Module({
   imports: [
     PassportModule,
+
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET'),
-        signOptions: { expiresIn: '7d' },
-      }),
       inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: {
+          expiresIn: '7d',
+        },
+      }),
     }),
-    RefreshTokenModule,
+
+    ConfigModule,
     PrismaModule,
     OtpModule,
     MailModule,
-    ConfigModule,
+    RefreshTokenModule,
   ],
-  providers: [AuthService, JwtStrategy],
+
   controllers: [AuthController],
+
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+  ],
+
+  exports: [
+    JwtModule,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+  ],
 })
 export class AuthModule {}
