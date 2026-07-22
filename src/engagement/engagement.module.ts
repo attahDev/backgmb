@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RolesGuard } from '../guards/roles.guard';
 
@@ -9,6 +10,7 @@ import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
 import { OpportunitiesService } from './opportunities/opportunities.service';
+import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
 
 import { CoursesService } from './courses/courses.service';
@@ -36,7 +38,7 @@ import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, HttpModule],
   controllers: [
     ActivityController,
     MentorsController,
@@ -54,6 +56,7 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ActivityService,
     MentorsService,
     OpportunitiesService,
+    OpportunitiesSyncService,
     CoursesService,
     EventsService,
     CommunityService,
