@@ -20,6 +20,7 @@ import { OpportunitiesSyncService } from './opportunities/opportunities-sync.ser
 // Courses
 import { CoursesService } from './courses/courses.service';
 import { CoursesController } from './courses/courses.controller';
+import { PdfExtractionService } from './courses/pdf-extraction.service';
 
 // Events
 import { EventsService } from './events/events.service';
@@ -85,6 +86,8 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     OpportunitiesSyncService,
 
     CoursesService,
+    PdfExtractionService,
+
     EventsService,
     CommunityService,
     DashboardService,
@@ -100,6 +103,8 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ActivityService,
     OpportunitiesService,
     OpportunitiesSyncService,
+    CoursesService,
+    PdfExtractionService,
   ],
 })
 export class EngagementModule {}
