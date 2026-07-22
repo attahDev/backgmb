@@ -13,9 +13,11 @@ import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
 import { OpportunitiesService } from './opportunities/opportunities.service';
+import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
 
 import { CoursesService } from './courses/courses.service';
+import { PdfExtractionService } from './courses/pdf-extraction.service';
 import { CoursesController } from './courses/courses.controller';
 
 import { EventsService } from './events/events.service';
@@ -45,6 +47,7 @@ import { GreenProjectsController } from './green-projects/green-projects.control
 
 @Module({
   imports: [PrismaModule, HttpModule],
+
   controllers: [
     ActivityController,
     NotificationsController,
@@ -60,12 +63,15 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ExchangeController,
     GreenProjectsController,
   ],
+
   providers: [
     ActivityService,
     NotificationsService,
     MentorsService,
     OpportunitiesService,
+    OpportunitiesSyncService,
     CoursesService,
+    PdfExtractionService,
     EventsService,
     CommunityService,
     DashboardService,
@@ -77,15 +83,14 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     GreenProjectsService,
     RolesGuard,
   ],
-   exports: [
+
+  exports: [
     ActivityService,
     OpportunitiesService,
     OpportunitiesSyncService,
     CoursesService,
     PdfExtractionService,
-    NotificationsService
+    NotificationsService,
   ],
 })
-
-
 export class EngagementModule {}
