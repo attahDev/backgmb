@@ -59,6 +59,7 @@ model User {
   greenProjectSupport GreenProjectSupport[]
   spotlightLikes      SpotlightLike[]
   creditTransactions  CreditTransaction[]
+  notifications       Notification[]
 
   @@map("users")
 }
@@ -844,4 +845,56 @@ model SpotlightLike {
   @@unique([userId, storyId])
   @@index([storyId])
   @@map("spotlight_likes")
+}
+
+/** Backs the bell icon / Notifications page (per-user feed) and the
+ *  separate admin feed ("everything on the platform"). One row per event —
+ *  USER-audience rows are owned by `userId`; ADMIN-audience rows are shared
+ *  (userId left null) so any admin marking one read clears it for all admins,
+ *  matching NotificationsService's markReadAdmin/markAllReadAdmin. */
+model Notification {
+  id String @id @default(uuid())
+
+  audience NotificationAudience
+
+  // Null when audience = ADMIN — the shared admin feed isn't owned by one
+  // particular admin account.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category NotificationCategory
+  title    String
+  body     String?
+
+  actionLabel String?
+  actionUrl   String?
+  metadata    Json?
+
+  isRead Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([audience, userId])
+  @@index([audience, isRead])
+  @@map("notifications")
+}
+
+enum NotificationAudience {
+  USER
+  ADMIN
+}
+
+/** Add new values here as more engagement areas start calling
+ *  notifyUser()/notifyAdmins() — COMMUNITY and EVENTS are the only ones
+ *  actually referenced right now (community.service.ts, events.service.ts),
+ *  the rest are here so the next feature that wants notifications doesn't
+ *  need a schema change too. */
+enum NotificationCategory {
+  COMMUNITY
+  EVENTS
+  MENTORS
+  OPPORTUNITIES
+  COURSES
+  GREEN_IMPACT
+  SYSTEM
 }
