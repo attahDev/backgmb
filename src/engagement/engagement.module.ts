@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { PrismaModule } from '../prisma/prisma.module';
+import { UploadsModule } from '../uploads/uploads.module';
 import { RolesGuard } from '../guards/roles.guard';
 
 import { ActivityService } from './activity/activity.service';
@@ -13,11 +14,9 @@ import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
 import { OpportunitiesService } from './opportunities/opportunities.service';
-import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
 
 import { CoursesService } from './courses/courses.service';
-import { PdfExtractionService } from './courses/pdf-extraction.service';
 import { CoursesController } from './courses/courses.controller';
 
 import { EventsService } from './events/events.service';
@@ -46,8 +45,7 @@ import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
 @Module({
-  imports: [PrismaModule, HttpModule],
-
+  imports: [PrismaModule, HttpModule, UploadsModule],
   controllers: [
     ActivityController,
     NotificationsController,
@@ -63,15 +61,12 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ExchangeController,
     GreenProjectsController,
   ],
-
   providers: [
     ActivityService,
     NotificationsService,
     MentorsService,
     OpportunitiesService,
-    OpportunitiesSyncService,
     CoursesService,
-    PdfExtractionService,
     EventsService,
     CommunityService,
     DashboardService,
@@ -83,14 +78,6 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     GreenProjectsService,
     RolesGuard,
   ],
-
-  exports: [
-    ActivityService,
-    OpportunitiesService,
-    OpportunitiesSyncService,
-    CoursesService,
-    PdfExtractionService,
-    NotificationsService,
-  ],
+  exports: [ActivityService, NotificationsService],
 })
 export class EngagementModule {}

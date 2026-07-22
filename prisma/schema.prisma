@@ -56,6 +56,8 @@ model User {
   spotlightLikes      SpotlightLike[]
   creditTransactions  CreditTransaction[]
   notifications       Notification[]
+  communityPosts      SpotlightStory[]
+  comments            Comment[]
 
   @@map("users")
 }
@@ -377,28 +379,18 @@ model MentorConnection {
 }
 
 model Opportunity {
-id String @id @default(uuid())
-title String
-description String?
-company String
-category String?
-location String?
-type String?
-source String @default("MANUAL")
-provider String?
-externalId String?
-url String?
-applyUrl String?
-isFeatured Boolean @default(false)
-isActive Boolean @default(true)
-postedAt DateTime @default(now())
-@@unique([provider, externalId], name: "provider_externalId")
-@@index([category])
-@@index([isFeatured])
-@@index([isActive])
-@@map("opportunities")
-}
+  id       String    @id @default(uuid())
+  title    String
+  company  String
+  location String?
+  type     String?
+  url      String?
+  postedAt DateTime  @default(now())
+  isActive Boolean   @default(true)
 
+  @@index([isActive])
+  @@map("opportunities")
+}
 
 model Course {
   id          String  @id @default(uuid())
@@ -768,6 +760,15 @@ model ActivityLog {
   @@map("activity_logs")
 }
 
+// PENDING  -> user-submitted, awaiting admin review (not visible in the feed)
+// APPROVED -> visible in the community feed
+// REJECTED -> hidden, kept around so the author can see why/that it was rejected
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model SpotlightStory {
   id          String  @id @default(uuid())
   title       String
@@ -781,15 +782,47 @@ model SpotlightStory {
   // off the row instead of a COUNT() join on every request. Source of
   // truth for "did THIS user like it" is the SpotlightLike join table.
   likes       Int     @default(0)
+  // Kept in sync by CommunityService.addComment()/deleteComment() the same
+  // way `likes` is — real rows live in Comment, source of truth for "did
+  // THIS user comment" style checks, this is just the display count.
   comments    Int     @default(0)
-  isPublished Boolean @default(true)
+
+  // Null = admin-authored editorial content (created before user posting
+  // existed, or still added by an admin directly). Set = a user's own
+  // community post/shoutout.
+  authorId String?
+  author   User?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  // Admin-authored rows default APPROVED so nothing already live gets
+  // hidden by this migration. User-submitted posts are created PENDING
+  // by CommunityService.createPost() and only appear in the feed once
+  // an admin approves them.
+  status PostStatus @default(APPROVED)
 
   createdAt DateTime @default(now())
 
-  likedBy SpotlightLike[]
+  likedBy      SpotlightLike[]
+  postComments Comment[]
 
-  @@index([isPublished])
+  @@index([status])
+  @@index([authorId])
   @@map("spotlight_stories")
+}
+
+model Comment {
+  id     String         @id @default(uuid())
+  postId String
+  post   SpotlightStory @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content String
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@map("comments")
 }
 
 model SpotlightLike {

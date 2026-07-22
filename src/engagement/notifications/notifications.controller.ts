@@ -33,16 +33,20 @@ export class NotificationsController {
 
   @Patch(':id/read')
   markRead(@CurrentUser() user: any, @Param('id') id: string) {
-    return this.notificationsService.markRead(id, { userId: user.userId, role: user.role });
+    return this.notificationsService.markRead(id, user.userId);
   }
 
   @Patch('read-all')
   markAllRead(@CurrentUser() user: any) {
-    return this.notificationsService.markAllRead({ userId: user.userId, role: user.role });
+    return this.notificationsService.markAllRead(user.userId);
   }
 
-  /** Admin-wide feed — "everything on the platform". Shared across every
-   *  admin (there's one ADMIN-audience row per event, not one per admin). */
+  // --- Admin feed — "everything on the platform" --------------------------
+  // Shared across every admin (one ADMIN-audience row per event, not one
+  // per admin). RolesGuard does its own DB role lookup — req.user from the
+  // JWT payload only ever carries { userId, email }, never a role — so
+  // these are separate routes rather than branching on user.role.
+
   @Get('admin')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
@@ -63,5 +67,19 @@ export class NotificationsController {
   @Roles(UserRole.ADMIN)
   unreadCountAdmin() {
     return this.notificationsService.unreadCountForAdmin().then((count) => ({ count }));
+  }
+
+  @Patch('admin/:id/read')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  markReadAdmin(@Param('id') id: string) {
+    return this.notificationsService.markReadAdmin(id);
+  }
+
+  @Patch('admin/read-all')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  markAllReadAdmin() {
+    return this.notificationsService.markAllReadAdmin();
   }
 }

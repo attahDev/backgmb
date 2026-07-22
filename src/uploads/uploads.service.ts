@@ -84,4 +84,39 @@ export class UploadsService {
 
     return { url, type: isImage ? 'image' : 'video' };
   }
+
+  /** Photo attached to a user's community post (event photos, etc). Images
+   *  only, deliberately smaller cap than course media — these are phone
+   *  photos, not production video assets. */
+  async uploadCommunityImage(file: Express.Multer.File): Promise<{ url: string }> {
+    if (!file) throw new BadRequestException('No file uploaded');
+
+    if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type '${file.mimetype}'. Allowed: PNG, JPEG, WEBP, GIF.`,
+      );
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      throw new BadRequestException(`File too large. Max ${Math.round(MAX_IMAGE_BYTES / (1024 * 1024))}MB.`);
+    }
+
+    const ext = file.originalname.includes('.') ? file.originalname.split('.').pop() : undefined;
+    const key = `community-posts/${randomUUID()}${ext ? `.${ext}` : ''}`;
+
+    await this.client().send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+        ACL: 'public-read',
+      }),
+    );
+
+    const base =
+      process.env.STORAGE_PUBLIC_URL ||
+      `https://${this.bucket}.s3.${process.env.STORAGE_REGION || 'us-east-1'}.amazonaws.com`;
+
+    return { url: `${base.replace(/\/$/, '')}/${key}` };
+  }
 }

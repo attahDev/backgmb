@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { NotificationAudience, NotificationCategory, UserRole } from '@prisma/client';
+import { NotificationAudience, NotificationCategory } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface NotifyOptions {
@@ -94,24 +94,39 @@ export class NotificationsService {
     });
   }
 
-  /** Scoped to the caller — an admin can't mark a user's notification read
-   *  and vice versa, since each feed only ever queries its own audience. */
-  async markRead(id: string, caller: { userId: string; role?: UserRole | null }) {
-    const isAdmin = caller.role === UserRole.ADMIN;
+  /** Scoped strictly to this user's own USER-audience rows — can't touch
+   *  someone else's, and can't touch ADMIN-audience rows either (those
+   *  go through markReadAdmin/markAllReadAdmin, gated by RolesGuard at
+   *  the controller). Deliberately doesn't take a role — see that guard
+   *  for why req.user never carries one. */
+  async markRead(id: string, userId: string) {
     return this.prisma.notification.updateMany({
-      where: isAdmin
-        ? { id, audience: NotificationAudience.ADMIN }
-        : { id, audience: NotificationAudience.USER, userId: caller.userId },
+      where: { id, audience: NotificationAudience.USER, userId },
       data: { isRead: true },
     });
   }
 
-  async markAllRead(caller: { userId: string; role?: UserRole | null }) {
-    const isAdmin = caller.role === UserRole.ADMIN;
+  async markAllRead(userId: string) {
     return this.prisma.notification.updateMany({
-      where: isAdmin
-        ? { audience: NotificationAudience.ADMIN, isRead: false }
-        : { audience: NotificationAudience.USER, userId: caller.userId, isRead: false },
+      where: { audience: NotificationAudience.USER, userId, isRead: false },
+      data: { isRead: true },
+    });
+  }
+
+  /** Admin feed is shared (one row per event, not one per admin) — so
+   *  these aren't scoped to a particular admin's id, only gated by
+   *  RolesGuard at the controller. Marking read is a shared action:
+   *  once any admin dismisses it, it's read for all admins. */
+  async markReadAdmin(id: string) {
+    return this.prisma.notification.updateMany({
+      where: { id, audience: NotificationAudience.ADMIN },
+      data: { isRead: true },
+    });
+  }
+
+  async markAllReadAdmin() {
+    return this.prisma.notification.updateMany({
+      where: { audience: NotificationAudience.ADMIN, isRead: false },
       data: { isRead: true },
     });
   }
