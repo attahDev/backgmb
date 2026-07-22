@@ -20,11 +20,26 @@ export class EventsService {
 
   async findUpcoming(includeInactive = false) {
     return this.prisma.event.findMany({
-      where: { ...(includeInactive ? {} : { isActive: true, startsAt: { gte: new Date() } }) },
+      where: {
+        ...(includeInactive
+          ? {}
+          : { isActive: true, isCompleted: false, startsAt: { gte: new Date() } }),
+      },
       // Featured first regardless of date, then soonest-first within each
       // group — an admin-pinned event should lead the dashboard even if a
       // closer, unfeatured event exists.
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }],
+    });
+  }
+
+  /** Powers "View All Events" — the full archive, upcoming AND completed,
+   *  minus anything the admin has soft-deleted. Unlike findUpcoming this
+   *  never date-filters, since a completed/past event should still show
+   *  up here even though it's dropped off the upcoming list. */
+  async findAll() {
+    return this.prisma.event.findMany({
+      where: { isActive: true },
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
     });
   }
 
@@ -120,6 +135,12 @@ export class EventsService {
     return { removed: true };
   }
 
+  async findOne(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+    return event;
+  }
+
   // ───────────────────────── Admin: event management ─────────────────────────
 
   async createEvent(dto: CreateEventDto) {
@@ -131,6 +152,7 @@ export class EventsService {
         imageUrl: dto.imageUrl,
         mode: dto.mode,
         link: dto.link,
+        tags: dto.tags ?? [],
         startsAt: new Date(dto.startsAt),
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
@@ -156,6 +178,8 @@ export class EventsService {
         ...(dto.endsAt !== undefined && { endsAt: new Date(dto.endsAt) }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         ...(dto.isFeatured !== undefined && { isFeatured: dto.isFeatured }),
+        ...(dto.isCompleted !== undefined && { isCompleted: dto.isCompleted }),
+        ...(dto.tags !== undefined && { tags: dto.tags }),
       },
     });
   }

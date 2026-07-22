@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class UpdateEventDto {
   @IsOptional() @IsString() @IsNotEmpty() title?: string;
@@ -11,4 +11,6 @@ export class UpdateEventDto {
   @IsOptional() @IsDateString() endsAt?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsBoolean() isFeatured?: boolean;
+  @IsOptional() @IsBoolean() isCompleted?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
 }

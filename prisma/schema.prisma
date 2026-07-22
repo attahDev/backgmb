@@ -580,6 +580,14 @@ model Event {
   // sorted purely by date — lets an admin put one event front-and-centre
   // on the dashboard regardless of how soon it is.
   isFeatured  Boolean   @default(false)
+  // Admin manually ticks an event off as done — distinct from isActive
+  // (soft-delete/hide). A completed event stays visible in the full
+  // events archive ("View All Events") but drops out of the upcoming
+  // list even if its date logic would otherwise still show it.
+  isCompleted Boolean   @default(false)
+  // Free-form chips shown on the public Events page cards (e.g. "AI/ML",
+  // "Networking") — same convention as Course.tags.
+  tags        String[]  @default([])
 
   createdAt DateTime @default(now())
 

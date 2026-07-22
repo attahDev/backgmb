@@ -18,12 +18,26 @@ export class EventsController {
     return this.eventsService.findUpcoming(includeInactive === 'true');
   }
 
+  /** "View All Events" — full archive (upcoming + completed), for the
+   *  public Events page's expand action. */
+  @Get('all')
+  findAllArchive() {
+    return this.eventsService.findAll();
+  }
+
   /** Powers the "My Events" dashboard — Upcoming / Attended / Saved tabs and
    *  the stats row above them. Replaces the hardcoded arrays that used to
    *  live directly in EventUI.tsx / EventStats.tsx. */
   @Get('mine')
   findMine(@CurrentUser() user: any) {
     return this.eventsService.findMine(user.userId);
+  }
+
+  /** Single event, for a detail modal/page. Registered after the static
+   *  'all' and 'mine' paths above so those aren't swallowed as :id values. */
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.eventsService.findOne(id);
   }
 
   @Post(':id/rsvp')
