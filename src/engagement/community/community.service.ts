@@ -187,8 +187,8 @@ export class CommunityService {
 
     // Let the post's author know someone engaged with their shoutout —
     // skip it if they're commenting on their own post.
-    if (post.userId && post.userId !== userId) {
-      await this.notificationsService.notifyUser(post.userId, {
+    if (post.authorId && post.authorId !== userId) {
+      await this.notificationsService.notifyUser(post.authorId, {
         category: NotificationCategory.COMMUNITY,
         title: `New comment on "${post.title}"`,
         actionLabel: 'View',
@@ -251,8 +251,8 @@ export class CommunityService {
       data: { status: PostStatus.APPROVED },
     });
 
-    if (post.userId) {
-      await this.notificationsService.notifyUser(post.userId, {
+    if (post.authorId) {
+      await this.notificationsService.notifyUser(post.authorId, {
         category: NotificationCategory.COMMUNITY,
         title: `Your post is live: "${post.title}"`,
         body: 'It now shows up in the community feed for everyone.',
@@ -271,8 +271,8 @@ export class CommunityService {
       data: { status: PostStatus.REJECTED },
     });
 
-    if (post.userId) {
-      await this.notificationsService.notifyUser(post.userId, {
+    if (post.authorId) {
+      await this.notificationsService.notifyUser(post.authorId, {
         category: NotificationCategory.COMMUNITY,
         title: `Your post wasn't approved: "${post.title}"`,
         body: reason || "It didn't meet the community guidelines.",
