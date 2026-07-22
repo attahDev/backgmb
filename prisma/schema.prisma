@@ -374,52 +374,17 @@ model MentorConnection {
   @@map("mentor_connections")
 }
 
-enum OpportunitySource {
-  // Entered by an admin through the Admin Portal opportunity form.
-  MANUAL
-  // Pulled in automatically from an external job/opportunity API
-  // (currently Adzuna — see OpportunitiesSyncService).
-  API
-}
-
 model Opportunity {
-  id          String  @id @default(uuid())
-  title       String
-  company     String
-  location    String?
-  // Free-form like Course.category / Event.mode — lets an admin introduce a
-  // new category from the form without a migration. Frontend renders
-  // whatever values exist in the DB as filter chips.
-  category    String?
-  // Employment/engagement type — Full-time, Part-time, Internship, Grant,
-  // Fellowship, Volunteer, etc.
-  type        String?
-  description String?
-  // Where "Apply" sends the user — a company's own posting, or an external
-  // board (Indeed, LinkedIn, Adzuna-aggregated listing, etc). We are not a
-  // job board: every opportunity ultimately routes off-site to apply.
-  applyUrl    String?
-  imageUrl    String?
-  source      OpportunitySource @default(MANUAL)
-  // Which external API this row came from when source = API (e.g.
-  // "adzuna"). Null for manual entries.
-  provider    String?
-  // The external API's own id for this listing — used together with
-  // `provider` to upsert on sync instead of creating duplicates each run.
-  externalId  String?
-  postedAt    DateTime  @default(now())
-  isActive    Boolean   @default(true)
-  // Featured opportunities are pinned first, same pattern as
-  // Event.isFeatured / Course.isFeatured — lets an admin highlight a
-  // manual listing regardless of postedAt.
-  isFeatured  Boolean   @default(false)
+  id       String    @id @default(uuid())
+  title    String
+  company  String
+  location String?
+  type     String?
+  url      String?
+  postedAt DateTime  @default(now())
+  isActive Boolean   @default(true)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([provider, externalId])
   @@index([isActive])
-  @@index([category])
   @@map("opportunities")
 }
 

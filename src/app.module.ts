@@ -16,6 +16,7 @@ import { BusinessPlannerModule } from './business-planner/business-planner.modul
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { BrandIdentityModule } from './brand-identity/brand-identity.module';
 import { EngagementModule } from './engagement/engagement.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 
 @Module({
@@ -43,6 +44,7 @@ import { EngagementModule } from './engagement/engagement.module';
     ChatbotModule,
     BrandIdentityModule,
     EngagementModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

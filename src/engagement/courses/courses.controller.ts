@@ -1,16 +1,33 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
 import { Roles } from '../../decorators/roles.decorator';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { CoursesService } from './courses.service';
+import { PdfExtractionService } from './pdf-extraction.service';
 import { CreateCourseDto, CreateModuleDto, UpdateCourseDto, UpdateModuleDto } from './dto/module.dto';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
 export class CoursesController {
-  constructor(private coursesService: CoursesService) {}
+  constructor(
+    private coursesService: CoursesService,
+    private pdfExtractionService: PdfExtractionService,
+  ) {}
+
+  /** Upload a PDF, get back a draft ModuleContentDto-shaped chapter to
+   *  review/edit in the admin chapter builder — nothing is saved to the
+   *  course until the admin submits the (possibly edited) result via the
+   *  normal POST .../modules endpoint below. */
+  @Post('extract-pdf')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 40 * 1024 * 1024 } }))
+  extractFromPdf(@UploadedFile() file: Express.Multer.File) {
+    return this.pdfExtractionService.extractModuleContent(file);
+  }
 
   /** ?category=education | climate — used by Academy and Green Impact pages
    *  respectively. Omit to get everything.
