@@ -163,7 +163,51 @@ async function seedCatalogue() {
     ],
   });
 
-  console.log('✅ Catalogue seeded (mentors, courses, events, spotlight).');
+  // Green Exchange listings — a real, admin-managed catalogue like the rest
+  // above. pointsPerCredit/availableQuantity are genuine starting values an
+  // admin can change any time via PATCH /green-exchange/admin/listings/:id;
+  // nothing about a user's balance or ownership is seeded here.
+  await prisma.creditListing.createMany({
+    skipDuplicates: true,
+    data: [
+      {
+        title: 'Forest Conservation Credits',
+        description: 'Support verified reforestation work across Greater Manchester.',
+        pointsPerCredit: 8,
+        availableQuantity: 500,
+      },
+      {
+        title: 'Clean Water Credits',
+        description: 'Fund clean water access initiatives in the region.',
+        pointsPerCredit: 4,
+        availableQuantity: 750,
+      },
+      {
+        title: 'Renewable Energy Credits',
+        description: 'Back local renewable energy generation projects.',
+        pointsPerCredit: 5,
+        availableQuantity: 1000,
+      },
+    ],
+  });
+
+  // Climate report cards — editable copy pieces, not numeric data. An admin
+  // can add/retire these any time via /green-impact/reports.
+  await prisma.climateReport.createMany({
+    skipDuplicates: true,
+    data: [
+      {
+        title: 'Manchester Climate Action Plan 2026',
+        description: "Latest updates on the city's carbon neutrality roadmap",
+      },
+      {
+        title: 'Green Economy Growth Report',
+        description: 'Analysis of sustainable business trends in the region',
+      },
+    ],
+  });
+
+  console.log('✅ Catalogue seeded (mentors, courses, events, spotlight, green exchange, climate reports).');
 }
 
 /**

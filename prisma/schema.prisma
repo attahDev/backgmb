@@ -54,6 +54,7 @@ model User {
   greenActions      GreenAction[]
   greenProjectSupport GreenProjectSupport[]
   spotlightLikes      SpotlightLike[]
+  creditTransactions  CreditTransaction[]
 
   @@map("users")
 }
@@ -525,6 +526,67 @@ model GreenProjectSupport {
   @@map("green_project_support")
 }
 
+// Internal marketplace listings for the Green Exchange — admin-managed,
+// same "no hardcoded content" convention as ClimateReport/Course/Event.
+// Credits here are a gamified in-platform reward, not a real external
+// carbon-credit market — pointsPerCredit is the cost/proceeds in the
+// user's Green Exchange balance, not real currency.
+model CreditListing {
+  id                String   @id @default(uuid())
+  title             String
+  description       String?
+  pointsPerCredit   Float
+  availableQuantity Int      @default(0)
+  isActive          Boolean  @default(true)
+  sortOrder         Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions CreditTransaction[]
+
+  @@map("credit_listings")
+}
+
+model CreditTransaction {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  listingId String
+  listing   CreditListing @relation(fields: [listingId], references: [id])
+
+  type        String // BUY | SELL
+  quantity    Int
+  // Negative for BUY (balance spent), positive for SELL (balance gained).
+  pointsDelta Float
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([listingId])
+  @@map("credit_transactions")
+}
+
+model ClimateReport {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  // External link to the full report (PDF, page, etc). Optional so a
+  // report can be published as a description-only teaser first and the
+  // link added later.
+  link        String?
+  isActive    Boolean @default(true)
+  // Lower sortOrder shows first; ties break by createdAt desc (newest
+  // first) — same convention as Course/Event ordering elsewhere.
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("climate_reports")
+}
+
 model GreenAction {
   id     String @id @default(uuid())
   userId String
@@ -533,6 +595,11 @@ model GreenAction {
   type        String // RECYCLING | TRANSPORT | ENERGY | WASTE_REDUCTION | TREE_PLANTING | OTHER
   description String?
   co2OffsetKg Float
+  // Optional Greater Manchester borough the action was logged under (e.g.
+  // "City Centre", "Salford", "Trafford"). Free text like Course.category —
+  // powers the real "Impact by Area" chart once users start tagging their
+  // logs; areas with no logged actions simply don't appear in that chart.
+  area        String?
 
   createdAt DateTime @default(now())
 

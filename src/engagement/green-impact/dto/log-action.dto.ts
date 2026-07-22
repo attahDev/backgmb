@@ -24,4 +24,11 @@ export class LogGreenActionDto {
   @Min(0.01)
   @Max(1000)
   co2OffsetKg: number;
+
+  // Optional Greater Manchester borough — powers the real "Impact by Area"
+  // chart. Free text so the frontend's dropdown list can change without a
+  // backend deploy.
+  @IsOptional()
+  @IsString()
+  area?: string;
 }

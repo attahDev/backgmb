@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RolesGuard } from '../guards/roles.guard';
 
@@ -13,7 +14,6 @@ import { OpportunitiesController } from './opportunities/opportunities.controlle
 
 import { CoursesService } from './courses/courses.service';
 import { CoursesController } from './courses/courses.controller';
-import { PdfExtractionService } from './courses/pdf-extraction.service';
 
 import { EventsService } from './events/events.service';
 import { EventsController } from './events/events.controller';
@@ -32,12 +32,16 @@ import { NominationsController } from './nominations/nominations.controller';
 
 import { GreenImpactService } from './green-impact/green-impact.service';
 import { GreenImpactController } from './green-impact/green-impact.controller';
+import { ClimateDataService } from './green-impact/climate-data.service';
+
+import { ExchangeService } from './green-impact/exchange.service';
+import { ExchangeController } from './green-impact/exchange.controller';
 
 import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, HttpModule],
   controllers: [
     ActivityController,
     MentorsController,
@@ -49,6 +53,7 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     TributesController,
     NominationsController,
     GreenImpactController,
+    ExchangeController,
     GreenProjectsController,
   ],
   providers: [
@@ -56,13 +61,14 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     MentorsService,
     OpportunitiesService,
     CoursesService,
-    PdfExtractionService,
     EventsService,
     CommunityService,
     DashboardService,
     TributesService,
     NominationsService,
     GreenImpactService,
+    ClimateDataService,
+    ExchangeService,
     GreenProjectsService,
     RolesGuard,
   ],
