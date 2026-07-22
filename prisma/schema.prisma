@@ -39,10 +39,10 @@ model User {
   verificationSessions VerificationSession[]
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
-  comments Comment[]
+  comments             Comment[]
 
-  brandAssets BrandAsset[]
-    chatSessions         ChatSession[]
+  brandAssets          BrandAsset[]
+  chatSessions         ChatSession[]
 
   mentorConnections MentorConnection[]
   // Present only when this user has been promoted to MENTOR by an admin —
@@ -811,7 +811,7 @@ model ActivityLog {
 }
 
 model SpotlightStory {
-  id          String @id @default(uuid())
+  id String @id @default(uuid())
 
   authorId String?
   author   User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
@@ -823,49 +823,43 @@ model SpotlightStory {
   authorRole String
 
   avatarColor String? @default("bg-red-600")
-  imageUrl String?
+  imageUrl    String?
 
   status PostStatus @default(PENDING)
 
-  likes Int @default(0)
+  likes    Int @default(0)
   comments Int @default(0)
 
   isPublished Boolean @default(false)
 
   createdAt DateTime @default(now())
 
-  likedBy SpotlightLike[]
+  likedBy     SpotlightLike[]
   commentList Comment[]
 
   @@index([status])
   @@index([isPublished])
   @@map("spotlight_stories")
 }
+
+
 model Comment {
   id String @id @default(uuid())
 
   storyId String
-  story SpotlightStory @relation(
-    fields: [storyId],
-    references: [id],
-    onDelete: Cascade
-  )
+  story SpotlightStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
   userId String?
-  user User? @relation(
-    fields: [userId],
-    references: [id],
-    onDelete: SetNull
-  )
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   content String
 
   createdAt DateTime @default(now())
 
-
   @@index([storyId])
   @@map("comments")
 }
+
 model SpotlightLike {
   id      String         @id @default(uuid())
   userId  String
