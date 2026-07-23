@@ -48,6 +48,9 @@ import { ExchangeController } from './green-impact/exchange.controller';
 import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
+import { BadgesService } from './badges/badges.service';
+import { BadgesController } from './badges/badges.controller';
+
 
 @Module({
   imports: [
@@ -81,6 +84,8 @@ import { GreenProjectsController } from './green-projects/green-projects.control
     ExchangeController,
 
     GreenProjectsController,
+
+    BadgesController,
   ],
 
   providers: [
@@ -113,6 +118,8 @@ import { GreenProjectsController } from './green-projects/green-projects.control
 
     GreenProjectsService,
 
+    BadgesService,
+
     RolesGuard,
   ],
 
@@ -122,7 +129,8 @@ exports: [
     OpportunitiesSyncService,
     CoursesService,
     PdfExtractionService,
-    NotificationsService
+    NotificationsService,
+    BadgesService,
   ],
 })
 

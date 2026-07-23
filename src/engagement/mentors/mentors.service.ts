@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
 import { MentorConnectionStatus, UserRole } from '@prisma/client';
 import { CreateMentorDto } from './dto/create-mentor.dto';
 import { UpdateMentorDto } from './dto/update-mentor.dto';
@@ -12,6 +13,7 @@ export class MentorsService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private badgesService: BadgesService,
   ) {}
 
   /** Public mentor directory (used by "Find a Mentor"). */
@@ -242,7 +244,7 @@ export class MentorsService {
       throw new NotFoundException('Mentee connection not found');
     }
 
-    return this.prisma.mentorConnection.update({
+    const updated = await this.prisma.mentorConnection.update({
       where: { id: connectionId },
       data: {
         ...(dto.status !== undefined && { status: dto.status }),
@@ -251,6 +253,12 @@ export class MentorsService {
       },
       include: { user: { select: { id: true, firstname: true, lastname: true, email: true } } },
     });
+
+    if (dto.status === MentorConnectionStatus.ACTIVE && connection.status !== MentorConnectionStatus.ACTIVE) {
+      await this.badgesService.evaluate(updated.userId, 'MENTOR_CONNECTIONS');
+    }
+
+    return updated;
   }
 
   // ───────────────────────── Mentor <-> mentee direct messaging ─────────────────────────

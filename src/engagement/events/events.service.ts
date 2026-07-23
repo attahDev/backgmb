@@ -1,6 +1,7 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationCategory } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -19,6 +20,7 @@ export class EventsService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private notificationsService: NotificationsService,
+    private badgesService: BadgesService,
   ) {}
 
   async findUpcoming(includeInactive = false) {
@@ -90,6 +92,7 @@ export class EventsService {
         include: { event: true },
       });
       await this.activityService.log(userId, 'EVENT_RSVP', `Registered for ${event.title}`, { eventId });
+      await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
       return attendance;
     }
 
@@ -104,6 +107,7 @@ export class EventsService {
       `Registered for ${event.title}`,
       { eventId },
     );
+    await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
 
     return attendance;
   }

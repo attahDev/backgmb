@@ -269,9 +269,37 @@ async function seedTeamAccounts() {
   }
 }
 
+/**
+ * Badge catalogue — definitions only (metric + target), same "admin-curated
+ * catalogue, not per-user activity" reasoning as seedCatalogue() above.
+ * Earning happens later, for real, via BadgesService.evaluate() — nothing
+ * here ever inserts a UserBadge row.
+ */
+async function seedBadges() {
+  console.log('🌱 Seeding badge catalogue...');
+
+  await prisma.badge.createMany({
+    skipDuplicates: true,
+    data: [
+      { name: 'Fast Starter', description: 'Complete your first module', metric: 'MODULES_COMPLETED', target: 1 },
+      { name: '3 Courses', description: 'Complete 3 courses', metric: 'COURSES_COMPLETED', target: 3 },
+      { name: 'Top Learner', description: 'Complete 10 courses', metric: 'COURSES_COMPLETED', target: 10 },
+      { name: 'Community', description: 'Register for your first event', metric: 'EVENTS_ATTENDED', target: 1 },
+      { name: 'Regular', description: 'Register for 5 events', metric: 'EVENTS_ATTENDED', target: 5 },
+      { name: 'Mentored', description: 'Get matched with a mentor', metric: 'MENTOR_CONNECTIONS', target: 1 },
+      { name: 'First Action Logged', description: 'Log your first green action', metric: 'GREEN_ACTIONS_LOGGED', target: 1 },
+      { name: '10 Actions Logged', description: 'Log 10 green actions', metric: 'GREEN_ACTIONS_LOGGED', target: 10 },
+      { name: '100kg CO2 Offset', description: 'Offset 100kg of CO2', metric: 'GREEN_CO2_KG', target: 100 },
+    ],
+  });
+
+  console.log('✅ Badge catalogue seeded.');
+}
+
 main()
   .then(() => seedTeamAccounts())
   .then(() => seedCatalogue())
+  .then(() => seedBadges())
   .catch((e) => {
     console.error('❌ Seed failed:', e);
     process.exit(1);

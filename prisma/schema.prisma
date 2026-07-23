@@ -24,6 +24,11 @@ model User {
   lastname         String
   organization     String?
   role             UserRole? // 👈 Uses enum now!
+  // Free-text region, e.g. "Greater Manchester" — shown on the profile page.
+  // No phone field: phone numbers aren't collected here, they come through
+  // the mentee log instead.
+  region             String?
+  profileVisibility  ProfileVisibility @default(PUBLIC)
   isVerified       Boolean   @default(false)
   // Admin deactivation switch — enforced in JwtStrategy so revoking access
   // takes effect immediately rather than waiting for the token to expire
@@ -71,6 +76,11 @@ enum UserRole {
   MENTOR
   ADMIN
   OTHER
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  PRIVATE
 }
 
 model Otp {
@@ -739,6 +749,16 @@ model Badge {
   description String?
   icon        String?
 
+  // Sitewide auto-award criteria — same shape GreenImpactService's old
+  // hardcoded BADGE_DEFINITIONS used (metric + target), now persisted so
+  // BadgesService.evaluate() is the ONE place that awards badges instead of
+  // each feature computing its own. metric is a free-form key (e.g.
+  // "COURSES_COMPLETED", "EVENTS_ATTENDED", "GREEN_ACTIONS_LOGGED") that
+  // BadgesService.CURRENT_VALUE resolvers know how to compute per-user.
+  metric String
+  target Int
+
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
   users UserBadge[]

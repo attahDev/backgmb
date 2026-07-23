@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
-import { UserRole } from '@prisma/client';
+import { UserRole, ProfileVisibility } from '@prisma/client';
 
 const ADMIN_SAFE_SELECT = {
   id: true,
@@ -17,6 +17,20 @@ const ADMIN_SAFE_SELECT = {
   isVerified: true,
   isActive: true,
   createdAt: true,
+  updatedAt: true,
+} as const;
+
+const PROFILE_SELECT = {
+  id: true,
+  email: true,
+  firstname: true,
+  lastname: true,
+  organization: true,
+  role: true,
+  region: true,
+  profileVisibility: true,
+  isVerified: true,
+  createdAt: true, // "Member since"
   updatedAt: true,
 } as const;
 
@@ -38,28 +52,33 @@ export class UsersService {
   }
 
   async getProfile(userId: string) {
-    return this.findById(userId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: PROFILE_SELECT,
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
   }
 
-  async updateProfile(userId: string, data: { name?: string }) {
-    const user = await this.prisma.user.update({
+  async updateProfile(
+    userId: string,
+    data: { firstname?: string; lastname?: string; organization?: string; region?: string },
+  ) {
+    return this.prisma.user.update({
       where: { id: userId },
-      data: {
-        ...data,
-        updatedAt: new Date(),
-      },
-      select: {
-        id: true,
-        email: true,
-        firstname: true,
-        lastname: true,
-        isVerified: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      data,
+      select: PROFILE_SELECT,
     });
+  }
 
-    return user;
+  /** Privacy & account settings — currently just profile visibility.
+   *  No 2FA field yet — deliberately not added until that's built. */
+  async updateSettings(userId: string, data: { profileVisibility?: ProfileVisibility }) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: PROFILE_SELECT,
+    });
   }
 
   async changePassword(

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
 import { CreateCourseDto, CreateModuleDto, UpdateCourseDto, UpdateModuleDto } from './dto/module.dto';
 import { slugify } from './slugify';
 
@@ -10,6 +11,7 @@ export class CoursesService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private badgesService: BadgesService,
   ) {}
 
   /** Course catalogue joined with the current user's own progress, if any.
@@ -158,6 +160,7 @@ export class CoursesService {
         `Completed "${module.title}" in ${course.title}`,
         { courseId: course.id, moduleId: module.id },
       );
+      await this.badgesService.evaluate(userId, 'MODULES_COMPLETED');
     }
 
     return moduleProgress;
@@ -187,6 +190,7 @@ export class CoursesService {
 
     if (isCompleted && !wasCompletedBefore?.isCompleted) {
       await this.activityService.log(userId, 'COURSE_COMPLETED', `Completed ${course.title}`, { courseId });
+      await this.badgesService.evaluate(userId, 'COURSES_COMPLETED');
     }
   }
 

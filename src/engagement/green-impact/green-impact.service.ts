@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
 import { LogGreenActionDto } from './dto/log-action.dto';
 import { CreateClimateReportDto, UpdateClimateReportDto } from './dto/climate-report.dto';
 import { ClimateDataService } from './climate-data.service';
@@ -44,6 +45,7 @@ export class GreenImpactService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private climateData: ClimateDataService,
+    private badgesService: BadgesService,
   ) {}
 
   /** Point formula — documented in the schema comment on GreenAction too:
@@ -75,6 +77,8 @@ export class GreenImpactService {
       `Logged ${dto.co2OffsetKg}kg CO2 offset (${dto.type.toLowerCase().replace('_', ' ')})`,
       { actionId: action.id },
     );
+    await this.badgesService.evaluate(userId, 'GREEN_ACTIONS_LOGGED');
+    await this.badgesService.evaluate(userId, 'GREEN_CO2_KG');
 
     return action;
   }
