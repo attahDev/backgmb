@@ -22,7 +22,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://gmbtefro-pfst.vercel.app",
+        "https://frogmbte.vercel.app", # keep if still used
         "http://localhost:5173",
     ],
     allow_credentials=True,
