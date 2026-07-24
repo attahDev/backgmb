@@ -113,6 +113,13 @@ export class UploadsService {
       }),
     );
 
+    const base =
+      process.env.STORAGE_PUBLIC_URL ||
+      `https://${this.bucket}.s3.${process.env.STORAGE_REGION || 'us-east-1'}.amazonaws.com`;
+
+    return { url: `${base.replace(/\/$/, '')}/${key}` };
+  }
+
   /** Photo attached to a member's "Host an Event" submission. Same
    *  size/type caps as community post photos, just its own S3 prefix so
    *  event images are easy to find/manage separately. */
