@@ -148,14 +148,28 @@ async def generate_idea_content(payload) -> dict:
             raise ValueError(f"Groq response missing fields: {missing}")
         return data
 
+    def _coerce_str_fields(data: dict) -> dict:
+        """Groq sometimes returns a prose field ('2-3 sentences') as a JSON list
+        of sentences instead of one string, even though the schema expects a
+        plain string. Join those back into a single string so they don't fail
+        Pydantic validation downstream."""
+        if isinstance(data.get("executive_summary"), list):
+            data["executive_summary"] = " ".join(str(s) for s in data["executive_summary"])
+
+        market = data.get("market_insights")
+        if isinstance(market, dict) and isinstance(market.get("opportunity"), list):
+            market["opportunity"] = " ".join(str(s) for s in market["opportunity"])
+
+        return data
+
     try:
         raw = await _call_groq(prompt, SYSTEM_PROMPT)
-        return _validate(_parse_groq_response(raw))
+        return _coerce_str_fields(_validate(_parse_groq_response(raw)))
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning("First Groq attempt failed to parse/validate: %s. Retrying...", e)
         try:
             raw = await _call_groq(prompt, STRICT_SYSTEM_PROMPT)
-            return _validate(_parse_groq_response(raw))
+            return _coerce_str_fields(_validate(_parse_groq_response(raw)))
         except (json.JSONDecodeError, ValueError) as e2:
             logger.error("Second Groq attempt also failed: %s", e2)
             raise ValueError("Groq returned malformed JSON after 2 attempts.") from e2
