@@ -3,9 +3,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { BadgesService } from '../badges/badges.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationCategory } from '@prisma/client';
+import { UploadsService } from '../../uploads/uploads.service';
+import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 
 /** Attendance.status values. Free-form string column in the DB (no enum),
  *  so keep the allowed values centralised here. */
@@ -20,12 +22,17 @@ export class EventsService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private notificationsService: NotificationsService,
+    private uploadsService: UploadsService,
     private badgesService: BadgesService,
   ) {}
 
   async findUpcoming(includeInactive = false) {
     return this.prisma.event.findMany({
       where: {
+        // Community submissions stay off every public listing until an
+        // admin approves them — includeInactive is for admin tooling and
+        // still shouldn't surface someone else's pending/rejected event.
+        reviewStatus: PostStatus.APPROVED,
         ...(includeInactive
           ? {}
           : { isActive: true, isCompleted: false, startsAt: { gte: new Date() } }),
@@ -41,10 +48,22 @@ export class EventsService {
    *  minus anything the admin has soft-deleted. Unlike findUpcoming this
    *  never date-filters, since a completed/past event should still show
    *  up here even though it's dropped off the upcoming list. */
+  /** "View All Events" — the public page's expand action. Deliberately
+   *  excludes completed events: those move to the separate Past Events /
+   *  Highlights section (findPastEvents), not this archive. */
   async findAll() {
     return this.prisma.event.findMany({
-      where: { isActive: true },
+      where: { isActive: true, isCompleted: false, reviewStatus: PostStatus.APPROVED },
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
+    });
+  }
+
+  /** "Our Past Events" / "Highlights from Previous Editions" on the public
+   *  Events page. Most recent first, so the newest recap leads. */
+  async findPastEvents() {
+    return this.prisma.event.findMany({
+      where: { isActive: true, isCompleted: true, reviewStatus: PostStatus.APPROVED },
+      orderBy: { startsAt: 'desc' },
     });
   }
 
@@ -175,8 +194,113 @@ export class EventsService {
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
         isFeatured: dto.isFeatured ?? false,
+        source: EventSource.ADMIN,
+        reviewStatus: PostStatus.APPROVED,
       },
     });
+  }
+
+  // ───────────────────────── Member: community event submissions ─────────────────────────
+
+  /** "Host an Event" — a member proposes their own event. Always lands
+   *  PENDING; never publicly visible until an admin approves it via
+   *  approveCommunityEvent(). Mirrors CommunityService's spotlight-post
+   *  moderation flow, including the optional photo upload. */
+  async submitCommunityEvent(userId: string, dto: CreateCommunityEventDto, file?: Express.Multer.File) {
+    let imageUrl: string | undefined;
+    if (file) {
+      const uploaded = await this.uploadsService.uploadEventImage(file);
+      imageUrl = uploaded.url;
+    }
+
+    const event = await this.prisma.event.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        location: dto.location,
+        imageUrl,
+        mode: dto.mode,
+        link: dto.link,
+        tags: dto.tags ?? [],
+        startsAt: new Date(dto.startsAt),
+        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        source: EventSource.USER,
+        reviewStatus: PostStatus.PENDING,
+        createdById: userId,
+      },
+    });
+
+    await this.activityService.log(
+      userId,
+      'EVENT_SUBMITTED',
+      `Submitted "${event.title}" for review`,
+      { eventId: event.id },
+    );
+
+    return event;
+  }
+
+  /** The current user's own submissions, whatever their review state —
+   *  powers a "My Submissions" view so a member can see PENDING/REJECTED
+   *  events without them being publicly visible. */
+  async findMySubmissions(userId: string) {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, createdById: userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ───────────────────────── Admin: community event moderation ─────────────────────────
+
+  async findPendingSubmissions() {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, reviewStatus: PostStatus.PENDING },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async approveCommunityEvent(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.APPROVED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event is live: "${updated.title}"`,
+        body: 'It now shows up in Events for everyone.',
+        actionLabel: 'View Event',
+        actionUrl: `/dashboard/events/${updated.id}`,
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
+  }
+
+  async rejectCommunityEvent(id: string, reason?: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.REJECTED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event wasn't approved: "${updated.title}"`,
+        body: reason || "It didn't meet the event guidelines.",
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
   }
 
   async updateEvent(id: string, dto: UpdateEventDto) {
@@ -216,6 +340,40 @@ export class EventsService {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return this.prisma.eventAttendance.count({
       where: { userId, createdAt: { gte: startOfMonth } },
+    });
+  }
+
+  // ───────────────────────── Admin: past-event recaps ─────────────────────────
+
+  /** Admin fills in "what happened" after an event wraps — feeds the public
+   *  "Highlights from Previous Editions" section. `keepGallery` is the
+   *  subset of existing image URLs the admin left checked in the editor
+   *  (removed ones just get dropped); any newly uploaded files are appended
+   *  after those. Setting a recap also flips isCompleted — an admin writing
+   *  up "what happened" implies the event is done, even if they hadn't
+   *  toggled that separately yet. */
+  async updateRecap(
+    id: string,
+    dto: { summary?: string; speakers?: string[]; achievements?: string[]; keepGallery?: string[] },
+    files: Express.Multer.File[],
+  ) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const uploaded = await Promise.all(files.map((f) => this.uploadsService.uploadEventImage(f)));
+    const gallery = [...(dto.keepGallery ?? []), ...uploaded.map((u) => u.url)];
+
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        isCompleted: true,
+        recap: {
+          summary: dto.summary ?? '',
+          speakers: dto.speakers ?? [],
+          achievements: dto.achievements ?? [],
+          gallery,
+        },
+      },
     });
   }
 }
