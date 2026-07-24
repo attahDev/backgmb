@@ -66,6 +66,8 @@ model User {
   spotlightLikes        SpotlightLike[]
   creditTransactions    CreditTransaction[]
   notifications         Notification[]
+  skillLogs             SkillLog[]
+  careerGoal            MenteeCareerGoal?
 
   @@map("users")
 }
@@ -367,6 +369,7 @@ model Mentor {
   updatedAt DateTime @updatedAt
 
   connections MentorConnection[]
+  spotlights  MentorSpotlight[]
 
   @@index([isActive])
   @@map("mentors")
@@ -390,7 +393,9 @@ model MentorConnection {
   sessionsCompleted Int                    @default(0)
   nextSessionAt     DateTime?
 
-  messages MenteeMessage[]
+  messages  MenteeMessage[]
+  sessions  MentorSession[]
+  skillLogs SkillLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -923,4 +928,125 @@ enum PostStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+// ---------------------------------------------------------------------------
+// Sessions, mentor spotlight, skill logging, and career paths — back
+// mentors.service.ts and career-paths.service.ts.
+// ---------------------------------------------------------------------------
+
+enum SessionStatus {
+  PENDING
+  SCHEDULED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+model MentorSession {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  proposedFor  DateTime
+  scheduledFor DateTime?
+  durationMins Int?
+  agenda       String?
+  status       SessionStatus @default(PENDING)
+  mentorNotes  String?
+  menteeNotes  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skillLogs SkillLog[]
+
+  @@index([connectionId])
+  @@index([status])
+  @@map("mentor_sessions")
+}
+
+model MentorSpotlight {
+  id       String @id @default(uuid())
+  mentorId String
+  mentor   Mentor @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+
+  shoutout  String
+  isActive  Boolean  @default(true)
+  startDate DateTime @default(now())
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate])
+  @@map("mentor_spotlights")
+}
+
+/** Mentee-reported skill, optionally tied to a specific session moment,
+ *  optionally confirmed by the mentor on that connection. */
+model SkillLog {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      MentorSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  menteeId     String
+  mentee       User             @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+
+  skillName         String
+  notes             String?
+  confirmedByMentor Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([connectionId])
+  @@index([menteeId])
+  @@index([sessionId])
+  @@map("skill_logs")
+}
+
+model CareerPath {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requiredSkills CareerPathSkill[]
+  menteeGoals    MenteeCareerGoal[]
+
+  @@map("career_paths")
+}
+
+model CareerPathSkill {
+  id           String     @id @default(uuid())
+  careerPathId String
+  careerPath   CareerPath @relation(fields: [careerPathId], references: [id], onDelete: Cascade)
+
+  skillName String
+  weight    Int    @default(1)
+
+  @@index([careerPathId])
+  @@map("career_path_skills")
+}
+
+/** One active goal per mentee. aiSummary/aiSummaryAt/aiSummarySkillsCount cache
+ *  the last AI gap-analysis so it only regenerates when logged-skill count changes. */
+model MenteeCareerGoal {
+  id           String     @id @default(uuid())
+  menteeId     String     @unique
+  mentee       User       @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  careerPathId String
+  careerPath   CareerPath @relation(fields: [careerPathId], references: [id])
+
+  aiSummary            String?
+  aiSummaryAt          DateTime?
+  aiSummarySkillsCount Int?
+  setAt                DateTime  @default(now())
+
+  @@map("mentee_career_goals")
 }
