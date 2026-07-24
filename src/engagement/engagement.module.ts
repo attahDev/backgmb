@@ -14,6 +14,9 @@ import { NotificationsController } from './notifications/notifications.controlle
 import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
+import { CareerPathsService } from './career-paths/career-paths.service';
+import { CareerPathsController } from './career-paths/career-paths.controller';
+
 import { OpportunitiesService } from './opportunities/opportunities.service';
 import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
@@ -65,6 +68,8 @@ import { BadgesController } from './badges/badges.controller';
 
     MentorsController,
 
+    CareerPathsController,
+
     OpportunitiesController,
 
     CoursesController,
@@ -94,6 +99,8 @@ import { BadgesController } from './badges/badges.controller';
     NotificationsService,
 
     MentorsService,
+
+    CareerPathsService,
 
     OpportunitiesService,
     OpportunitiesSyncService,
