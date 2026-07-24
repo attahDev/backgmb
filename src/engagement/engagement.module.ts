@@ -14,6 +14,9 @@ import { NotificationsController } from './notifications/notifications.controlle
 import { MentorsService } from './mentors/mentors.service';
 import { MentorsController } from './mentors/mentors.controller';
 
+import { CareerPathsService } from './career-paths/career-paths.service';
+import { CareerPathsController } from './career-paths/career-paths.controller';
+
 import { OpportunitiesService } from './opportunities/opportunities.service';
 import { OpportunitiesSyncService } from './opportunities/opportunities-sync.service';
 import { OpportunitiesController } from './opportunities/opportunities.controller';
@@ -48,9 +51,6 @@ import { ExchangeController } from './green-impact/exchange.controller';
 import { GreenProjectsService } from './green-projects/green-projects.service';
 import { GreenProjectsController } from './green-projects/green-projects.controller';
 
-import { BadgesService } from './badges/badges.service';
-import { BadgesController } from './badges/badges.controller';
-
 
 @Module({
   imports: [
@@ -64,6 +64,8 @@ import { BadgesController } from './badges/badges.controller';
     NotificationsController,
 
     MentorsController,
+
+    CareerPathsController,
 
     OpportunitiesController,
 
@@ -84,8 +86,6 @@ import { BadgesController } from './badges/badges.controller';
     ExchangeController,
 
     GreenProjectsController,
-
-    BadgesController,
   ],
 
   providers: [
@@ -94,6 +94,8 @@ import { BadgesController } from './badges/badges.controller';
     NotificationsService,
 
     MentorsService,
+
+    CareerPathsService,
 
     OpportunitiesService,
     OpportunitiesSyncService,
@@ -118,8 +120,6 @@ import { BadgesController } from './badges/badges.controller';
 
     GreenProjectsService,
 
-    BadgesService,
-
     RolesGuard,
   ],
 
@@ -129,8 +129,7 @@ exports: [
     OpportunitiesSyncService,
     CoursesService,
     PdfExtractionService,
-    NotificationsService,
-    BadgesService,
+    NotificationsService
   ],
 })
 

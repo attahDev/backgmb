@@ -10,6 +10,11 @@ import { UpdateMentorDto } from './dto/update-mentor.dto';
 import { PromoteMentorDto } from './dto/promote-mentor.dto';
 import { UpdateMenteeConnectionDto } from './dto/update-mentee-connection.dto';
 import { SendMenteeMessageDto } from './dto/send-mentee-message.dto';
+import { LogSkillDto } from './dto/log-skill.dto';
+import { RequestSessionDto } from './dto/request-session.dto';
+import { UpdateSessionDto } from './dto/update-session.dto';
+import { CreateMentorSpotlightDto } from './dto/create-mentor-spotlight.dto';
+import { UpdateMentorSpotlightDto } from './dto/update-mentor-spotlight.dto';
 
 @Controller('mentors')
 @UseGuards(JwtAuthGuard)
@@ -29,6 +34,11 @@ export class MentorsController {
   @Get('stats')
   stats(@CurrentUser() user: any) {
     return this.mentorsService.stats(user.userId);
+  }
+
+  @Get('spotlight/active')
+  getActiveSpotlights() {
+    return this.mentorsService.getActiveSpotlights();
   }
 
   // ───────────────────────── Mentor's own dashboard: "My Mentees" ─────────────────────────
@@ -59,6 +69,52 @@ export class MentorsController {
     @Body() dto: SendMenteeMessageDto,
   ) {
     return this.mentorsService.sendMessage(connectionId, user.userId, dto.content);
+  }
+
+  // ───────────────────────── Skill logging ─────────────────────────
+
+  @Get('mentees/:connectionId/skills')
+  listSkillLogs(@CurrentUser() user: any, @Param('connectionId') connectionId: string) {
+    return this.mentorsService.listSkillLogs(user.userId, connectionId);
+  }
+
+  @Post('mentees/:connectionId/skills')
+  logSkill(
+    @CurrentUser() user: any,
+    @Param('connectionId') connectionId: string,
+    @Body() dto: LogSkillDto,
+  ) {
+    return this.mentorsService.logSkill(user.userId, connectionId, dto);
+  }
+
+  @Patch('skills/:skillLogId/confirm')
+  confirmSkillLog(@CurrentUser() user: any, @Param('skillLogId') skillLogId: string) {
+    return this.mentorsService.confirmSkillLog(user.userId, skillLogId);
+  }
+
+  // ───────────────────────── Sessions ─────────────────────────
+
+  @Get('mentees/:connectionId/sessions')
+  listSessions(@CurrentUser() user: any, @Param('connectionId') connectionId: string) {
+    return this.mentorsService.listSessions(connectionId, user.userId);
+  }
+
+  @Post('mentees/:connectionId/sessions')
+  requestSession(
+    @CurrentUser() user: any,
+    @Param('connectionId') connectionId: string,
+    @Body() dto: RequestSessionDto,
+  ) {
+    return this.mentorsService.requestSession(connectionId, user.userId, dto);
+  }
+
+  @Patch('sessions/:sessionId')
+  updateSession(
+    @CurrentUser() user: any,
+    @Param('sessionId') sessionId: string,
+    @Body() dto: UpdateSessionDto,
+  ) {
+    return this.mentorsService.updateSession(sessionId, user.userId, dto);
   }
 
   @Post(':id/connect')
@@ -103,5 +159,35 @@ export class MentorsController {
   @Roles(UserRole.ADMIN)
   demote(@Param('userId') userId: string) {
     return this.mentorsService.demoteMentor(userId);
+  }
+
+  // ───────────────────────── Admin: Mentor Spotlight ─────────────────────────
+
+  @Get('spotlight/admin')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  adminListSpotlights() {
+    return this.mentorsService.adminListSpotlights();
+  }
+
+  @Post('spotlight')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  createSpotlight(@Body() dto: CreateMentorSpotlightDto) {
+    return this.mentorsService.createSpotlight(dto);
+  }
+
+  @Patch('spotlight/:id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  updateSpotlight(@Param('id') id: string, @Body() dto: UpdateMentorSpotlightDto) {
+    return this.mentorsService.updateSpotlight(id, dto);
+  }
+
+  @Delete('spotlight/:id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  removeSpotlight(@Param('id') id: string) {
+    return this.mentorsService.removeSpotlight(id);
   }
 }
