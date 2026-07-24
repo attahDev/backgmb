@@ -7,6 +7,8 @@ import { CreateMentorDto } from './dto/create-mentor.dto';
 import { UpdateMentorDto } from './dto/update-mentor.dto';
 import { PromoteMentorDto } from './dto/promote-mentor.dto';
 import { UpdateMenteeConnectionDto } from './dto/update-mentee-connection.dto';
+import { CreateMentorSpotlightDto } from './dto/create-mentor-spotlight.dto';
+import { UpdateMentorSpotlightDto } from './dto/update-mentor-spotlight.dto';
 
 @Injectable()
 export class MentorsService {
@@ -75,35 +77,151 @@ export class MentorsService {
       include: { mentor: true },
     });
 
-    const active = connections.filter((c) => c.status === 'ACTIVE' || c.status === 'COMPLETED');
-    const totalSessions = connections.reduce((sum, c) => sum + c.sessionsCompleted, 0);
-
-    const skillsDeveloped = new Set<string>();
-    active.forEach((c) => c.mentor.skills.forEach((s) => skillsDeveloped.add(s)));
+    const totalSessions = await this.prisma.mentorSession.count({
+      where: { connection: { userId }, status: 'COMPLETED' },
+    });
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const networkGrowth = connections.filter((c) => c.createdAt >= thirtyDaysAgo).length;
 
-    const [coursesCompleted, eventsAttended] = await Promise.all([
+    // "Skills developed" now counts distinct skills the mentee actually logged
+    // (see SkillLog), not skills tagged on the mentor's own profile — a mentee
+    // was previously credited for skills they'd never engaged with at all.
+    const [skillLogs, coursesCompleted, eventsAttended] = await Promise.all([
+      this.prisma.skillLog.findMany({ where: { menteeId: userId }, select: { skillName: true } }),
       this.prisma.courseProgress.count({ where: { userId, isCompleted: true } }),
       this.prisma.eventAttendance.count({ where: { userId } }),
     ]);
+    const skillsDeveloped = new Set(skillLogs.map((s) => s.skillName.trim().toLowerCase())).size;
 
-    // Simple, transparent heuristic: readiness grows with sessions, courses and
-    // events, capped at 100. Documented so product can tune the weights later
-    // instead of it being a fixed "75%" nobody could explain.
+    // Simple, transparent heuristic: readiness grows with sessions, courses,
+    // events, and now logged skills — capped at 100. Documented so product can
+    // tune the weights later instead of it being a fixed "75%" nobody could
+    // explain. See CareerPathsService#getMyReadiness for the path-aware version
+    // that supersedes this once a mentee has picked a target career path.
     const careerReadiness = Math.min(
       100,
-      totalSessions * 8 + coursesCompleted * 10 + eventsAttended * 4,
+      totalSessions * 6 + coursesCompleted * 10 + eventsAttended * 4 + skillsDeveloped * 5,
     );
 
     return {
-      skillsDeveloped: skillsDeveloped.size,
+      skillsDeveloped,
       totalSessions,
       networkGrowth,
       careerReadinessPercent: careerReadiness,
     };
+  }
+
+  // ───────────────────────── Skill logging (mentee-reported, mentor-confirmable) ─────────────────────────
+
+  /** Mentee logs a skill they learned within a connection, optionally tied to a session moment.
+   *
+   *  Free-text skill names get normalized against the mentee's chosen career
+   *  path's required-skill list where possible (e.g. "React.js" / "reactjs"
+   *  both resolve to whatever exact string the path uses, "React"), so
+   *  readiness matching in CareerPathsService doesn't silently miss things
+   *  that are really the same skill. Falls back to the raw trimmed input if
+   *  there's no career goal set, no close match, or AI is unavailable —
+   *  normalization is a nice-to-have, never a blocker on logging. */
+  async logSkill(
+    userId: string,
+    connectionId: string,
+    dto: { skillName: string; notes?: string; sessionId?: string },
+  ) {
+    const connection = await this.prisma.mentorConnection.findUnique({ where: { id: connectionId } });
+    if (!connection) throw new NotFoundException('Connection not found');
+    if (connection.userId !== userId) throw new ForbiddenException('Not your mentorship connection');
+
+    const skillName = await this.normalizeSkillName(userId, dto.skillName.trim());
+
+    return this.prisma.skillLog.create({
+      data: {
+        connectionId,
+        sessionId: dto.sessionId,
+        menteeId: userId,
+        skillName,
+        notes: dto.notes,
+      },
+    });
+  }
+
+  /** Resolves free-text input to a canonical skill name from the mentee's
+   *  active career path, if one is close enough. Cheap string matching
+   *  first; only falls back to an AI call for genuinely ambiguous cases
+   *  (different wording, same skill) — and even then, only if the input
+   *  doesn't already exactly match something. */
+  private async normalizeSkillName(userId: string, rawSkillName: string): Promise<string> {
+    const goal = await this.prisma.menteeCareerGoal.findUnique({
+      where: { menteeId: userId },
+      include: { careerPath: { include: { requiredSkills: true } } },
+    });
+    const candidates = goal?.careerPath.requiredSkills.map((s) => s.skillName) ?? [];
+    if (candidates.length === 0) return rawSkillName;
+
+    const simplify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rawSimplified = simplify(rawSkillName);
+
+    // Exact match (case/punctuation-insensitive) — no AI needed.
+    const exact = candidates.find((c) => simplify(c) === rawSimplified);
+    if (exact) return exact;
+
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) return rawSkillName;
+
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-120b',
+          messages: [
+            {
+              role: 'system',
+              content: `You match a free-text skill name to a canonical list, or say it doesn't match. Respond with ONLY valid JSON, no markdown fences: {"match": string | null} — the exact string from the candidate list if it clearly refers to the same skill, otherwise null. Be conservative: only match if you're confident it's the same skill under different wording.`,
+            },
+            {
+              role: 'user',
+              content: `Free-text skill: "${rawSkillName}"\nCandidates: ${JSON.stringify(candidates)}`,
+            },
+          ],
+          temperature: 0,
+          response_format: { type: 'json_object' },
+        }),
+      });
+      if (!response.ok) return rawSkillName;
+      const payload = await response.json();
+      const parsed = JSON.parse(payload?.choices?.[0]?.message?.content ?? '{}');
+      return typeof parsed.match === 'string' && candidates.includes(parsed.match) ? parsed.match : rawSkillName;
+    } catch {
+      return rawSkillName; // normalization is advisory — never block on it
+    }
+  }
+
+  /** All skills logged within one connection — visible to either party. */
+  async listSkillLogs(userId: string, connectionId: string) {
+    await this.assertConnectionMember(connectionId, userId);
+    return this.prisma.skillLog.findMany({
+      where: { connectionId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Mentor taps to confirm a mentee's self-reported skill actually happened. */
+  async confirmSkillLog(userId: string, skillLogId: string) {
+    const log = await this.prisma.skillLog.findUnique({
+      where: { id: skillLogId },
+      include: { connection: { include: { mentor: true } } },
+    });
+    if (!log) throw new NotFoundException('Skill log not found');
+    if (log.connection.mentor.userId !== userId) {
+      throw new ForbiddenException('Only the mentor on this connection can confirm this');
+    }
+
+    return this.prisma.skillLog.update({
+      where: { id: skillLogId },
+      data: { confirmedByMentor: true },
+    });
   }
 
   // ───────────────────────── Admin: mentor directory management ─────────────────────────
@@ -291,5 +409,154 @@ export class MentorsService {
     return this.prisma.menteeMessage.create({
       data: { connectionId, senderId: userId, content },
     });
+  }
+
+  // ───────────────────────── Sessions ─────────────────────────
+  // Flow: mentee proposes a time (PENDING) -> mentor confirms, possibly
+  // adjusting the time (SCHEDULED) -> either party marks the outcome
+  // afterward (COMPLETED / NO_SHOW / CANCELLED). Completed sessions are the
+  // source of truth for "Total Sessions" and are the natural moment to log a
+  // skill (see SkillLog.sessionId).
+
+  async listSessions(connectionId: string, userId: string) {
+    await this.assertConnectionMember(connectionId, userId);
+    return this.prisma.mentorSession.findMany({
+      where: { connectionId },
+      orderBy: { proposedFor: 'desc' },
+    });
+  }
+
+  /** Mentee proposes a session time within a connection they belong to. */
+  async requestSession(
+    connectionId: string,
+    userId: string,
+    dto: { proposedFor: string; durationMins?: number; agenda?: string },
+  ) {
+    const connection = await this.assertConnectionMember(connectionId, userId);
+    if (connection.userId !== userId) {
+      throw new ForbiddenException('Only the mentee can propose a session time');
+    }
+
+    return this.prisma.mentorSession.create({
+      data: {
+        connectionId,
+        proposedFor: new Date(dto.proposedFor),
+        durationMins: dto.durationMins,
+        agenda: dto.agenda,
+      },
+    });
+  }
+
+  /** Either party can update a session: mentor confirming/declining a time,
+   *  either side marking it completed/no-show/cancelled, or adding notes. */
+  async updateSession(
+    sessionId: string,
+    userId: string,
+    dto: {
+      status?: string;
+      scheduledFor?: string;
+      mentorNotes?: string;
+      menteeNotes?: string;
+    },
+  ) {
+    const session = await this.prisma.mentorSession.findUnique({
+      where: { id: sessionId },
+      include: { connection: { include: { mentor: true } } },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+
+    const isMentee = session.connection.userId === userId;
+    const isMentor = session.connection.mentor.userId === userId;
+    if (!isMentee && !isMentor) throw new ForbiddenException('Not part of this connection');
+
+    // Only the mentor can confirm a time / move a PENDING request to SCHEDULED —
+    // mentees propose, mentors confirm. Either side can mark an already-scheduled
+    // session's outcome (completed/no-show/cancelled).
+    if (dto.status === 'SCHEDULED' && !isMentor) {
+      throw new ForbiddenException('Only the mentor can confirm a session time');
+    }
+
+    const updated = await this.prisma.mentorSession.update({
+      where: { id: sessionId },
+      data: {
+        status: dto.status as any,
+        scheduledFor: dto.scheduledFor ? new Date(dto.scheduledFor) : undefined,
+        mentorNotes: isMentor ? dto.mentorNotes : undefined,
+        menteeNotes: isMentee ? dto.menteeNotes : undefined,
+      },
+    });
+
+    // Keep the legacy sessionsCompleted counter roughly in sync for anything
+    // still reading it directly, even though stats() no longer trusts it.
+    if (dto.status === 'COMPLETED') {
+      const completedCount = await this.prisma.mentorSession.count({
+        where: { connectionId: session.connectionId, status: 'COMPLETED' },
+      });
+      await this.prisma.mentorConnection.update({
+        where: { id: session.connectionId },
+        data: { sessionsCompleted: completedCount },
+      });
+    }
+
+    return updated;
+  }
+
+  // ───────────────────────── Mentor Spotlight (admin-curated) ─────────────────────────
+
+  /** Public: the current shoutout(s) to show on the dashboard/homepage. */
+  async getActiveSpotlights() {
+    const now = new Date();
+    return this.prisma.mentorSpotlight.findMany({
+      where: {
+        isActive: true,
+        startDate: { lte: now },
+        OR: [{ endDate: null }, { endDate: { gte: now } }],
+      },
+      include: { mentor: true },
+      orderBy: { startDate: 'desc' },
+    });
+  }
+
+  async adminListSpotlights() {
+    return this.prisma.mentorSpotlight.findMany({
+      include: { mentor: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createSpotlight(dto: CreateMentorSpotlightDto) {
+    const mentor = await this.prisma.mentor.findUnique({ where: { id: dto.mentorId } });
+    if (!mentor) throw new NotFoundException('Mentor not found');
+
+    return this.prisma.mentorSpotlight.create({
+      data: {
+        mentorId: dto.mentorId,
+        shoutout: dto.shoutout,
+        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+      },
+      include: { mentor: true },
+    });
+  }
+
+  async updateSpotlight(id: string, dto: UpdateMentorSpotlightDto) {
+    const spotlight = await this.prisma.mentorSpotlight.findUnique({ where: { id } });
+    if (!spotlight) throw new NotFoundException('Spotlight not found');
+
+    return this.prisma.mentorSpotlight.update({
+      where: { id },
+      data: {
+        shoutout: dto.shoutout,
+        isActive: dto.isActive,
+        endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+      },
+      include: { mentor: true },
+    });
+  }
+
+  async removeSpotlight(id: string) {
+    const spotlight = await this.prisma.mentorSpotlight.findUnique({ where: { id } });
+    if (!spotlight) throw new NotFoundException('Spotlight not found');
+    await this.prisma.mentorSpotlight.delete({ where: { id } });
+    return { message: 'Spotlight removed' };
   }
 }
