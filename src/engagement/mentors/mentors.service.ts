@@ -25,7 +25,10 @@ export class MentorsService {
         isActive: true,
         ...(skill ? { skills: { has: skill } } : {}),
       },
-      orderBy: { createdAt: 'desc' },
+      // Grouped by admin-assigned category first, newest within each
+      // category second — keeps the directory organized instead of one
+      // flat reverse-chronological list.
+      orderBy: [{ category: 'asc' }, { createdAt: 'desc' }],
     });
   }
 
@@ -236,6 +239,7 @@ export class MentorsService {
         bio: dto.bio,
         skills: dto.skills ?? [],
         isActive: dto.isActive ?? true,
+        category: dto.category?.trim() || 'General',
       },
     });
   }
@@ -254,6 +258,7 @@ export class MentorsService {
         ...(dto.bio !== undefined && { bio: dto.bio }),
         ...(dto.skills !== undefined && { skills: dto.skills }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.category !== undefined && { category: dto.category.trim() || 'General' }),
       },
     });
   }

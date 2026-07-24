@@ -364,6 +364,12 @@ model Mentor {
   skills    String[]
   isActive  Boolean @default(true)
 
+  // Admin-assigned grouping used to sort/filter the mentor directory
+  // (e.g. "Engineering", "Design", "Product"). Free text on purpose —
+  // no fixed enum — so admins aren't blocked waiting on a code change
+  // to add a new category.
+  category String @default("General")
+
   // Nullable: older/seed directory rows may still have no linked login.
   // When set, this Mentor IS a real User (role: MENTOR) who can log in
   // and see their own "My Mentees" dashboard.

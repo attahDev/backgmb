@@ -8,4 +8,5 @@ export class UpdateMentorDto {
   @IsOptional() @IsString() bio?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) skills?: string[];
   @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsString() @IsNotEmpty() category?: string;
 }

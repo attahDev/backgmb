@@ -29,4 +29,9 @@ export class CreateMentorDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  category?: string;
 }

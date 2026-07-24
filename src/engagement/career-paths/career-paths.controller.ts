@@ -41,6 +41,15 @@ export class CareerPathsController {
     return this.careerPathsService.adminList();
   }
 
+  // Paths are AI-generated on first request rather than hand-entered.
+  // This lets an admin force a fresh batch (e.g. after tuning the prompt).
+  @Post('admin/regenerate')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  regenerate() {
+    return this.careerPathsService.regenerate();
+  }
+
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)

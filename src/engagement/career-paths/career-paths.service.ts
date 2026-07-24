@@ -15,6 +15,22 @@ const GAP_ANALYSIS_SYSTEM_PROMPT = `You are a supportive but direct career mento
 }
 Be concrete and specific to the skill names given — don't invent skills that weren't listed.`;
 
+// Career paths are AI-authored, not hand-entered by an admin: the first
+// mentee to hit an empty directory triggers a one-time generation that
+// seeds a standard set, persisted so every mentee after them just reads
+// from the DB. Re-run any time by clearing the career_paths table.
+const PATH_GENERATION_SYSTEM_PROMPT = `You design career readiness tracks for a youth tech mentorship platform. Respond with ONLY valid JSON, no markdown fences, matching exactly:
+{
+  "paths": [
+    {
+      "title": string (a clear job-family name, e.g. "Frontend Engineer", "Data Analyst"),
+      "description": string (1-2 sentences on what this path involves and who it suits),
+      "requiredSkills": [ { "skillName": string, "weight": number (1-5, importance) } ]
+    }
+  ]
+}
+Generate 6 distinct, common tech career paths relevant to early-career African tech talent (engineering, design, data, product, cybersecurity, marketing/growth — pick a good spread). Each path needs 5-8 concrete, specific requiredSkills (not vague like "communication" — prefer things like "REST API design" or "Figma prototyping"). Don't invent paths beyond what's asked.`;
+
 function normalize(name: string) {
   return name.trim().toLowerCase();
 }
@@ -26,11 +42,74 @@ export class CareerPathsService {
   // ───────────────────────── Public / mentee-facing ─────────────────────────
 
   async listActivePaths() {
+    const existing = await this.prisma.careerPath.findMany({
+      where: { isActive: true },
+      include: { requiredSkills: true },
+      orderBy: { title: 'asc' },
+    });
+    if (existing.length > 0) return existing;
+
+    // Nothing in the directory yet — this is the AI's job to populate,
+    // not an admin's. Generate once and persist; safe to call repeatedly
+    // since a second caller arriving mid-generation just finds rows now
+    // present the next time this runs (no locking needed at this scale).
+    await this.generateCareerPaths();
     return this.prisma.careerPath.findMany({
       where: { isActive: true },
       include: { requiredSkills: true },
       orderBy: { title: 'asc' },
     });
+  }
+
+  /** One-time AI seed of the career-path directory. Returns quietly (leaving
+   *  the directory empty) if there's no Groq key or the call fails — the
+   *  mentee just sees an empty picker rather than a broken page, and the
+   *  next request retries. */
+  private async generateCareerPaths() {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) return;
+
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: PATH_GENERATION_SYSTEM_PROMPT },
+            { role: 'user', content: 'Generate the career paths now.' },
+          ],
+          temperature: 0.5,
+          response_format: { type: 'json_object' },
+        }),
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const raw = payload?.choices?.[0]?.message?.content;
+      if (!raw) return;
+
+      const parsed: {
+        paths: { title: string; description?: string; requiredSkills: { skillName: string; weight?: number }[] }[];
+      } = JSON.parse(raw);
+      if (!Array.isArray(parsed.paths) || parsed.paths.length === 0) return;
+
+      for (const path of parsed.paths) {
+        if (!path.title || !path.requiredSkills?.length) continue;
+        await this.prisma.careerPath.create({
+          data: {
+            title: path.title.trim(),
+            description: path.description?.trim() || null,
+            requiredSkills: {
+              create: path.requiredSkills
+                .filter((s) => s.skillName)
+                .map((s) => ({ skillName: s.skillName.trim(), weight: s.weight ?? 1 })),
+            },
+          },
+        });
+      }
+    } catch {
+      // seed attempt failed — leave the directory empty, next call retries
+    }
   }
 
   async setMyGoal(userId: string, careerPathId: string) {
@@ -158,6 +237,22 @@ export class CareerPathsService {
   }
 
   // ───────────────────────── Admin ─────────────────────────
+
+  /** Admin trigger to have the AI regenerate the whole directory from
+   *  scratch (e.g. the first batch reads stale, or they want a refresh).
+   *  Existing mentee goals pointing at removed paths are cascade-deleted
+   *  along with them — mentees just see "Set a career path" again. */
+  async regenerate() {
+    // FK on mentee_career_goals.careerPathId is ON DELETE RESTRICT, so
+    // clear goals pointing at the old paths before the paths themselves.
+    await this.prisma.menteeCareerGoal.deleteMany({});
+    await this.prisma.careerPath.deleteMany({});
+    await this.generateCareerPaths();
+    return this.prisma.careerPath.findMany({
+      include: { requiredSkills: true, _count: { select: { menteeGoals: true } } },
+      orderBy: { title: 'asc' },
+    });
+  }
 
   async adminList() {
     return this.prisma.careerPath.findMany({
