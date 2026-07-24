@@ -9,10 +9,11 @@ import {
   Post,
   Query,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -24,26 +25,34 @@ import { UpdateEventDto } from './dto/update-event.dto';
 import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 
 @Controller('events')
-@UseGuards(JwtAuthGuard)
 export class EventsController {
   constructor(private eventsService: EventsService) {}
 
+  /** Public — the marketing site's Events page calls this unauthenticated. */
   @Get()
   findUpcoming(@Query('includeInactive') includeInactive?: string) {
     return this.eventsService.findUpcoming(includeInactive === 'true');
   }
 
-  /** "View All Events" — full archive (upcoming + completed), for the
+  /** "View All Events" — public, upcoming/non-completed archive for the
    *  public Events page's expand action. */
   @Get('all')
   findAllArchive() {
     return this.eventsService.findAll();
   }
 
+  /** Public — "Our Past Events / Highlights from Previous Editions" on the
+   *  public Events page. */
+  @Get('past')
+  findPastEvents() {
+    return this.eventsService.findPastEvents();
+  }
+
   /** Powers the "My Events" dashboard — Upcoming / Attended / Saved tabs and
    *  the stats row above them. Replaces the hardcoded arrays that used to
    *  live directly in EventUI.tsx / EventStats.tsx. */
   @Get('mine')
+  @UseGuards(JwtAuthGuard)
   findMine(@CurrentUser() user: any) {
     return this.eventsService.findMine(user.userId);
   }
@@ -53,12 +62,14 @@ export class EventsController {
    *  visible. Two path segments, so no ordering hazard with ':id' below,
    *  but kept up here with the other static GETs for readability. */
   @Get('community/mine')
+  @UseGuards(JwtAuthGuard)
   findMySubmissions(@CurrentUser() user: any) {
     return this.eventsService.findMySubmissions(user.userId);
   }
 
-  /** Single event, for a detail modal/page. Registered after the static
-   *  'all' and 'mine' paths above so those aren't swallowed as :id values. */
+  /** Single event, for a detail modal/page. Public — same reasoning as
+   *  findUpcoming above. Registered after the static 'all'/'past'/'mine'
+   *  paths above so those aren't swallowed as :id values. */
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.eventsService.findOne(id);
@@ -72,6 +83,7 @@ export class EventsController {
    *  body, since `tags` needs manual parsing either way. Always lands
    *  PENDING — see EventsService. */
   @Post('community')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 15 * 1024 * 1024 } }))
   submitCommunityEvent(
     @CurrentUser() user: any,
@@ -106,16 +118,19 @@ export class EventsController {
   }
 
   @Post(':id/rsvp')
+  @UseGuards(JwtAuthGuard)
   rsvp(@CurrentUser() user: any, @Param('id') eventId: string) {
     return this.eventsService.rsvp(user.userId, eventId);
   }
 
   @Post(':id/save')
+  @UseGuards(JwtAuthGuard)
   save(@CurrentUser() user: any, @Param('id') eventId: string) {
     return this.eventsService.save(user.userId, eventId);
   }
 
   @Delete(':id/save')
+  @UseGuards(JwtAuthGuard)
   unsave(@CurrentUser() user: any, @Param('id') eventId: string) {
     return this.eventsService.unsave(user.userId, eventId);
   }
@@ -123,21 +138,21 @@ export class EventsController {
   // ───────────────────────── Admin: event management ─────────────────────────
 
   @Post()
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   createEvent(@Body() dto: CreateEventDto) {
     return this.eventsService.createEvent(dto);
   }
 
   @Patch(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   updateEvent(@Param('id') id: string, @Body() dto: UpdateEventDto) {
     return this.eventsService.updateEvent(id, dto);
   }
 
   @Delete(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   removeEvent(@Param('id') id: string) {
     return this.eventsService.removeEvent(id);
@@ -146,23 +161,61 @@ export class EventsController {
   // ───────────────────────── Admin: community event moderation ─────────────────────────
 
   @Get('admin/pending')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   findPendingSubmissions() {
     return this.eventsService.findPendingSubmissions();
   }
 
   @Patch('admin/:id/approve')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   approveCommunityEvent(@Param('id') id: string) {
     return this.eventsService.approveCommunityEvent(id);
   }
 
   @Patch('admin/:id/reject')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   rejectCommunityEvent(@Param('id') id: string, @Body('reason') reason?: string) {
     return this.eventsService.rejectCommunityEvent(id, reason);
+  }
+
+  /** Admin writes up "what happened" after an event — powers the public
+   *  Highlights section. Multipart: summary/speakers/achievements as text
+   *  fields (speakers/achievements comma-separated, same convention as
+   *  tags), keepGallery as a JSON-stringified array of URLs the admin left
+   *  in place, plus any number of new `gallery` image files. */
+  @Patch('admin/:id/recap')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(FilesInterceptor('gallery', 10, { limits: { fileSize: 15 * 1024 * 1024 } }))
+  updateRecap(
+    @Param('id') id: string,
+    @Body('summary') summary: string,
+    @Body('speakers') speakersText: string,
+    @Body('achievements') achievementsText: string,
+    @Body('keepGallery') keepGalleryJson: string,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    let keepGallery: string[] = [];
+    try {
+      keepGallery = keepGalleryJson ? JSON.parse(keepGalleryJson) : [];
+    } catch {
+      keepGallery = [];
+    }
+
+    return this.eventsService.updateRecap(
+      id,
+      {
+        summary: summary || undefined,
+        speakers: speakersText ? speakersText.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        achievements: achievementsText
+          ? achievementsText.split(',').map((s) => s.trim()).filter(Boolean)
+          : [],
+        keepGallery,
+      },
+      files ?? [],
+    );
   }
 }

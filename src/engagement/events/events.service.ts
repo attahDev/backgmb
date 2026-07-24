@@ -46,10 +46,22 @@ export class EventsService {
    *  minus anything the admin has soft-deleted. Unlike findUpcoming this
    *  never date-filters, since a completed/past event should still show
    *  up here even though it's dropped off the upcoming list. */
+  /** "View All Events" — the public page's expand action. Deliberately
+   *  excludes completed events: those move to the separate Past Events /
+   *  Highlights section (findPastEvents), not this archive. */
   async findAll() {
     return this.prisma.event.findMany({
-      where: { isActive: true, reviewStatus: PostStatus.APPROVED },
+      where: { isActive: true, isCompleted: false, reviewStatus: PostStatus.APPROVED },
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
+    });
+  }
+
+  /** "Our Past Events" / "Highlights from Previous Editions" on the public
+   *  Events page. Most recent first, so the newest recap leads. */
+  async findPastEvents() {
+    return this.prisma.event.findMany({
+      where: { isActive: true, isCompleted: true, reviewStatus: PostStatus.APPROVED },
+      orderBy: { startsAt: 'desc' },
     });
   }
 
@@ -324,6 +336,40 @@ export class EventsService {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return this.prisma.eventAttendance.count({
       where: { userId, createdAt: { gte: startOfMonth } },
+    });
+  }
+
+  // ───────────────────────── Admin: past-event recaps ─────────────────────────
+
+  /** Admin fills in "what happened" after an event wraps — feeds the public
+   *  "Highlights from Previous Editions" section. `keepGallery` is the
+   *  subset of existing image URLs the admin left checked in the editor
+   *  (removed ones just get dropped); any newly uploaded files are appended
+   *  after those. Setting a recap also flips isCompleted — an admin writing
+   *  up "what happened" implies the event is done, even if they hadn't
+   *  toggled that separately yet. */
+  async updateRecap(
+    id: string,
+    dto: { summary?: string; speakers?: string[]; achievements?: string[]; keepGallery?: string[] },
+    files: Express.Multer.File[],
+  ) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const uploaded = await Promise.all(files.map((f) => this.uploadsService.uploadEventImage(f)));
+    const gallery = [...(dto.keepGallery ?? []), ...uploaded.map((u) => u.url)];
+
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        isCompleted: true,
+        recap: {
+          summary: dto.summary ?? '',
+          speakers: dto.speakers ?? [],
+          achievements: dto.achievements ?? [],
+          gallery,
+        },
+      },
     });
   }
 }
