@@ -54,6 +54,7 @@ model User {
   menteeMessages        MenteeMessage[]
   courseProgress        CourseProgress[]
   eventAttendance       EventAttendance[]
+  createdEvents         Event[]
   userBadges            UserBadge[]
   activityLogs          ActivityLog[]
   tributes              Tribute[]
@@ -539,25 +540,6 @@ model ModuleProgress {
   @@map("module_progress")
 }
 
-/** A sustainability action a user logs themselves (recycling, using
- *  transit, energy saving, etc). Everything on the Green Impact dashboard
- *  (CO2 tracked, points, ranking) is computed from real rows in this
- *  table — nothing here is a fabricated number.
- *
- *  Point formula, picked as a reasonable, documented default rather than
- *  guessed silently: 1 point per kg of CO2 offset, rounded to the nearest
- *  whole point. Revisit if you want a different formula later — it's
- *  computed in one place (GreenImpactService.pointsFor) so changing it
- *  doesn't require a migration. */
-/** Community-nominated sustainability projects. There is no payment
- *  processor wired in anywhere (checked — nothing in this codebase talks
- *  to Stripe or similar), so "raisedAmountMinor" is NOT a record of real
- *  money moving — it's an admin-editable running total, same honesty
- *  tradeoff as everywhere else that doesn't have real billing yet.
- *  "Supporting" a project (GreenProjectSupport) IS real — it's a genuine
- *  user action, just not a financial transaction. Don't wire a "Pay" button
- *  to this without adding real payment processing first — same warning as
- *  the Hall of Fame nomination flow. */
 model GreenProject {
   id          String @id @default(uuid())
   title       String
@@ -588,11 +570,6 @@ model GreenProjectSupport {
   @@map("green_project_support")
 }
 
-// Internal marketplace listings for the Green Exchange — admin-managed,
-// same "no hardcoded content" convention as ClimateReport/Course/Event.
-// Credits here are a gamified in-platform reward, not a real external
-// carbon-credit market — pointsPerCredit is the cost/proceeds in the
-// user's Green Exchange balance, not real currency.
 model CreditListing {
   id                String   @id @default(uuid())
   title             String
@@ -620,7 +597,6 @@ model CreditTransaction {
 
   type        String // BUY | SELL
   quantity    Int
-  // Negative for BUY (balance spent), positive for SELL (balance gained).
   pointsDelta Float
 
   createdAt DateTime @default(now())
@@ -634,13 +610,8 @@ model ClimateReport {
   id          String  @id @default(uuid())
   title       String
   description String?
-  // External link to the full report (PDF, page, etc). Optional so a
-  // report can be published as a description-only teaser first and the
-  // link added later.
   link        String?
   isActive    Boolean @default(true)
-  // Lower sortOrder shows first; ties break by createdAt desc (newest
-  // first) — same convention as Course/Event ordering elsewhere.
   sortOrder   Int     @default(0)
 
   createdAt DateTime @default(now())
@@ -654,13 +625,9 @@ model GreenAction {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  type        String // RECYCLING | TRANSPORT | ENERGY | WASTE_REDUCTION | TREE_PLANTING | OTHER
+  type        String
   description String?
   co2OffsetKg Float
-  // Optional Greater Manchester borough the action was logged under (e.g.
-  // "City Centre", "Salford", "Trafford"). Free text like Course.category —
-  // powers the real "Impact by Area" chart once users start tagging their
-  // logs; areas with no logged actions simply don't appear in that chart.
   area        String?
 
   createdAt DateTime @default(now())
@@ -718,13 +685,31 @@ model Event {
   // "Networking") — same convention as Course.tags.
   tags        String[]  @default([])
 
+  // ADMIN = official GMBTE-curated events (created via the admin panel).
+  // USER  = submitted by a member through "Host an Event" on the dashboard.
+  source       EventSource @default(ADMIN)
+  // Reuses the same PENDING/APPROVED/REJECTED moderation flow as
+  // SpotlightStory. Admin-created events skip the queue entirely
+  // (default APPROVED); user submissions start PENDING and only become
+  // publicly visible once an admin approves them — see findUpcoming/findAll.
+  reviewStatus PostStatus  @default(APPROVED)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   attendees EventAttendance[]
 
   @@index([isActive])
   @@index([startsAt])
+  @@index([reviewStatus])
   @@map("events")
+}
+
+enum EventSource {
+  ADMIN
+  USER
 }
 
 model EventAttendance {
@@ -749,12 +734,6 @@ model Badge {
   description String?
   icon        String?
 
-  // Sitewide auto-award criteria — same shape GreenImpactService's old
-  // hardcoded BADGE_DEFINITIONS used (metric + target), now persisted so
-  // BadgesService.evaluate() is the ONE place that awards badges instead of
-  // each feature computing its own. metric is a free-form key (e.g.
-  // "COURSES_COMPLETED", "EVENTS_ATTENDED", "GREEN_ACTIONS_LOGGED") that
-  // BadgesService.CURRENT_VALUE resolvers know how to compute per-user.
   metric String
   target Int
 
@@ -802,8 +781,6 @@ model Nomination {
   category    String?
   story       String
 
-  // PENDING | APPROVED | REJECTED — admin has to approve before a
-  // nomination shows up as a "Recent Nomination" anywhere public.
   status     String    @default("PENDING")
   reviewedAt DateTime?
 
@@ -893,20 +870,11 @@ model SpotlightLike {
   @@map("spotlight_likes")
 }
 
-/** Backs the bell icon / Notifications page (per-user feed) and the
- *  separate admin feed ("everything on the platform"). One row per event —
- *  USER-audience rows are owned by `userId`; ADMIN-audience rows are shared
- *  (userId left null) so any admin marking one read clears it for all admins,
- *  matching NotificationsService's markReadAdmin/markAllReadAdmin. */
-
-
 model Notification {
   id String @id @default(uuid())
 
   audience NotificationAudience
 
-  // Null when audience = ADMIN — the shared admin feed isn't owned by one
-  // particular admin account.
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -932,11 +900,6 @@ enum NotificationAudience {
   ADMIN
 }
 
-/** Add new values here as more engagement areas start calling
- *  notifyUser()/notifyAdmins() — COMMUNITY and EVENTS are the only ones
- *  actually referenced right now (community.service.ts, events.service.ts),
- *  the rest are here so the next feature that wants notifications doesn't
- *  need a schema change too. */
 enum NotificationCategory {
   COMMUNITY
   EVENTS
@@ -952,5 +915,3 @@ enum PostStatus {
   APPROVED
   REJECTED
 }
-
-

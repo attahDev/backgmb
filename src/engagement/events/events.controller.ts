@@ -1,4 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -7,6 +21,7 @@ import { CurrentUser } from '../../decorators/current-user.decorator';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 
 @Controller('events')
 @UseGuards(JwtAuthGuard)
@@ -33,11 +48,61 @@ export class EventsController {
     return this.eventsService.findMine(user.userId);
   }
 
+  /** The current user's own "Host an Event" submissions — PENDING/APPROVED/
+   *  REJECTED — so a member can track status without them being publicly
+   *  visible. Two path segments, so no ordering hazard with ':id' below,
+   *  but kept up here with the other static GETs for readability. */
+  @Get('community/mine')
+  findMySubmissions(@CurrentUser() user: any) {
+    return this.eventsService.findMySubmissions(user.userId);
+  }
+
   /** Single event, for a detail modal/page. Registered after the static
    *  'all' and 'mine' paths above so those aren't swallowed as :id values. */
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.eventsService.findOne(id);
+  }
+
+  /** "Host an Event" — any authenticated member can submit one. No
+   *  RolesGuard: this is deliberately open to everyone, unlike admin
+   *  createEvent() below. Multipart: same fields as CreateCommunityEventDto
+   *  plus an optional `image` file — matches community.controller.ts's
+   *  createPost pattern rather than binding a DTO straight off multipart
+   *  body, since `tags` needs manual parsing either way. Always lands
+   *  PENDING — see EventsService. */
+  @Post('community')
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 15 * 1024 * 1024 } }))
+  submitCommunityEvent(
+    @CurrentUser() user: any,
+    @Body('title') title: string,
+    @Body('description') description: string,
+    @Body('location') location: string,
+    @Body('mode') mode: string,
+    @Body('link') link: string,
+    @Body('startsAt') startsAt: string,
+    @Body('endsAt') endsAt: string,
+    @Body('tags') tagsText: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    if (!title?.trim() || !startsAt) {
+      throw new BadRequestException('Title and start date are required');
+    }
+
+    const dto: CreateCommunityEventDto = {
+      title,
+      description: description || undefined,
+      location: location || undefined,
+      mode: mode || undefined,
+      link: link || undefined,
+      startsAt,
+      endsAt: endsAt || undefined,
+      tags: tagsText
+        ? tagsText.split(',').map((t) => t.trim()).filter(Boolean)
+        : [],
+    };
+
+    return this.eventsService.submitCommunityEvent(user.userId, dto, file);
   }
 
   @Post(':id/rsvp')
@@ -76,5 +141,28 @@ export class EventsController {
   @Roles(UserRole.ADMIN)
   removeEvent(@Param('id') id: string) {
     return this.eventsService.removeEvent(id);
+  }
+
+  // ───────────────────────── Admin: community event moderation ─────────────────────────
+
+  @Get('admin/pending')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  findPendingSubmissions() {
+    return this.eventsService.findPendingSubmissions();
+  }
+
+  @Patch('admin/:id/approve')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  approveCommunityEvent(@Param('id') id: string) {
+    return this.eventsService.approveCommunityEvent(id);
+  }
+
+  @Patch('admin/:id/reject')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  rejectCommunityEvent(@Param('id') id: string, @Body('reason') reason?: string) {
+    return this.eventsService.rejectCommunityEvent(id, reason);
   }
 }

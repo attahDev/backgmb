@@ -1,11 +1,12 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
-import { BadgesService } from '../badges/badges.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationCategory } from '@prisma/client';
+import { UploadsService } from '../../uploads/uploads.service';
+import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 
 /** Attendance.status values. Free-form string column in the DB (no enum),
  *  so keep the allowed values centralised here. */
@@ -20,12 +21,16 @@ export class EventsService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private notificationsService: NotificationsService,
-    private badgesService: BadgesService,
+    private uploadsService: UploadsService,
   ) {}
 
   async findUpcoming(includeInactive = false) {
     return this.prisma.event.findMany({
       where: {
+        // Community submissions stay off every public listing until an
+        // admin approves them — includeInactive is for admin tooling and
+        // still shouldn't surface someone else's pending/rejected event.
+        reviewStatus: PostStatus.APPROVED,
         ...(includeInactive
           ? {}
           : { isActive: true, isCompleted: false, startsAt: { gte: new Date() } }),
@@ -43,7 +48,7 @@ export class EventsService {
    *  up here even though it's dropped off the upcoming list. */
   async findAll() {
     return this.prisma.event.findMany({
-      where: { isActive: true },
+      where: { isActive: true, reviewStatus: PostStatus.APPROVED },
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
     });
   }
@@ -92,7 +97,6 @@ export class EventsService {
         include: { event: true },
       });
       await this.activityService.log(userId, 'EVENT_RSVP', `Registered for ${event.title}`, { eventId });
-      await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
       return attendance;
     }
 
@@ -107,7 +111,6 @@ export class EventsService {
       `Registered for ${event.title}`,
       { eventId },
     );
-    await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
 
     return attendance;
   }
@@ -175,8 +178,113 @@ export class EventsService {
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
         isFeatured: dto.isFeatured ?? false,
+        source: EventSource.ADMIN,
+        reviewStatus: PostStatus.APPROVED,
       },
     });
+  }
+
+  // ───────────────────────── Member: community event submissions ─────────────────────────
+
+  /** "Host an Event" — a member proposes their own event. Always lands
+   *  PENDING; never publicly visible until an admin approves it via
+   *  approveCommunityEvent(). Mirrors CommunityService's spotlight-post
+   *  moderation flow, including the optional photo upload. */
+  async submitCommunityEvent(userId: string, dto: CreateCommunityEventDto, file?: Express.Multer.File) {
+    let imageUrl: string | undefined;
+    if (file) {
+      const uploaded = await this.uploadsService.uploadEventImage(file);
+      imageUrl = uploaded.url;
+    }
+
+    const event = await this.prisma.event.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        location: dto.location,
+        imageUrl,
+        mode: dto.mode,
+        link: dto.link,
+        tags: dto.tags ?? [],
+        startsAt: new Date(dto.startsAt),
+        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        source: EventSource.USER,
+        reviewStatus: PostStatus.PENDING,
+        createdById: userId,
+      },
+    });
+
+    await this.activityService.log(
+      userId,
+      'EVENT_SUBMITTED',
+      `Submitted "${event.title}" for review`,
+      { eventId: event.id },
+    );
+
+    return event;
+  }
+
+  /** The current user's own submissions, whatever their review state —
+   *  powers a "My Submissions" view so a member can see PENDING/REJECTED
+   *  events without them being publicly visible. */
+  async findMySubmissions(userId: string) {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, createdById: userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ───────────────────────── Admin: community event moderation ─────────────────────────
+
+  async findPendingSubmissions() {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, reviewStatus: PostStatus.PENDING },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async approveCommunityEvent(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.APPROVED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event is live: "${updated.title}"`,
+        body: 'It now shows up in Events for everyone.',
+        actionLabel: 'View Event',
+        actionUrl: `/dashboard/events/${updated.id}`,
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
+  }
+
+  async rejectCommunityEvent(id: string, reason?: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.REJECTED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event wasn't approved: "${updated.title}"`,
+        body: reason || "It didn't meet the event guidelines.",
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
   }
 
   async updateEvent(id: string, dto: UpdateEventDto) {
