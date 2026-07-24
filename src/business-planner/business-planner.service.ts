@@ -46,6 +46,7 @@ export class BusinessPlannerService {
           location: payload.location,
           experienceLevel: payload.experience_level,
           goal: payload.goal,
+          sourceIdeaId: payload.source_idea_id || null,
           aiResponse: response.data,
         },
       });
