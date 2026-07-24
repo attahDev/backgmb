@@ -20,12 +20,16 @@ app = FastAPI(
 )
 
 _origins = settings.allowed_origins_list
-if not _origins and settings.ENVIRONMENT == "development":
-    _origins = ["http://localhost:3000", "http://localhost:5173"]
+if not _origins:
+    _origins = (
+        ["http://localhost:3000", "http://localhost:5173"]
+        if settings.ENVIRONMENT == "development"
+        else ["https://frogmbte.vercel.app"]
+    )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins or ["https://gmbtefro-pfst.vercel.app"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,7 +41,16 @@ app.include_router(ideas.router)
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    # This handler runs on Starlette's outer ServerErrorMiddleware layer, outside
+    # CORSMiddleware, so responses from here never get CORS headers attached
+    # automatically — without this, every unhandled 500 shows up in the browser
+    # as an opaque CORS failure instead of the actual error.
+    origin = request.headers.get("origin")
+    if origin and (origin in _origins or "*" in _origins):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 @app.get("/health")
