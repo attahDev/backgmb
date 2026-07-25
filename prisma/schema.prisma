@@ -861,7 +861,8 @@ model SpotlightStory {
   avatarColor String? @default("bg-red-600")
   imageUrl    String?
 
-  status PostStatus @default(PENDING)
+  status     PostStatus @default(PENDING)
+  approvedAt DateTime?
 
   likes    Int @default(0)
   comments Int @default(0)
@@ -875,6 +876,7 @@ model SpotlightStory {
 
   @@index([status])
   @@index([isPublished])
+  @@index([status, approvedAt])
   @@map("spotlight_stories")
 }
 
