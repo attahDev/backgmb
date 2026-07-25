@@ -7,7 +7,6 @@ import { UsersModule } from './users/users.module';
 import { MailModule } from './mail/mail.module';
 import { OtpModule } from './otp/otp.module';
 import { ConfigModule } from '@nestjs/config';
-import { ScheduleModule } from '@nestjs/schedule';
 import { RefreshTokenModule } from './refresh-token/refresh-token.module';
 import { ContactModule } from './contact/contact.module';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -35,7 +34,6 @@ import { GreenAiModule } from './green-ai/green-ai.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     UsersModule,
