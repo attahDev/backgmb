@@ -112,6 +112,39 @@ export class CareerPathsService {
     }
   }
 
+  /** Mentors whose listed skills best overlap the mentee's chosen path's
+   *  required skills — the natural next step after "here's what you're
+   *  missing" is "here's who can help you close that gap". */
+  async getRecommendedMentors(userId: string) {
+    const goal = await this.prisma.menteeCareerGoal.findUnique({
+      where: { menteeId: userId },
+      include: { careerPath: { include: { requiredSkills: true } } },
+    });
+    if (!goal) return [];
+
+    const requiredNames = new Set(goal.careerPath.requiredSkills.map((s) => normalize(s.skillName)));
+    const mentors = await this.prisma.mentor.findMany({ where: { isActive: true } });
+
+    const scored = mentors
+      .map((mentor) => {
+        const matchedSkills = mentor.skills.filter((skill) => requiredNames.has(normalize(skill)));
+        return { mentor, matchedSkills };
+      })
+      .filter((entry) => entry.matchedSkills.length > 0)
+      .sort((a, b) => b.matchedSkills.length - a.matchedSkills.length)
+      .slice(0, 6);
+
+    return scored.map(({ mentor, matchedSkills }) => ({
+      id: mentor.id,
+      name: mentor.name,
+      role: mentor.role,
+      company: mentor.company,
+      avatarUrl: mentor.avatarUrl,
+      category: mentor.category,
+      matchedSkills,
+    }));
+  }
+
   async setMyGoal(userId: string, careerPathId: string) {
     const path = await this.prisma.careerPath.findUnique({ where: { id: careerPathId } });
     if (!path) throw new NotFoundException('Career path not found');

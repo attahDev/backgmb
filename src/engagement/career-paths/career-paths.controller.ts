@@ -27,6 +27,11 @@ export class CareerPathsController {
     return this.careerPathsService.getMyReadiness(user.userId);
   }
 
+  @Get('my-goal/recommended-mentors')
+  getRecommendedMentors(@CurrentUser() user: any) {
+    return this.careerPathsService.getRecommendedMentors(user.userId);
+  }
+
   @Post('my-goal')
   setMyGoal(@CurrentUser() user: any, @Body() dto: SetCareerGoalDto) {
     return this.careerPathsService.setMyGoal(user.userId, dto.careerPathId);
