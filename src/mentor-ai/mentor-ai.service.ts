@@ -5,6 +5,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError, AxiosResponse } from 'axios';
+import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 type ChatRole = 'user' | 'assistant';
@@ -25,7 +26,7 @@ interface AiRequestBody {
 
 const GROQ_MODEL = process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-120b';
 
-const MENTOR_SYSTEM_PROMPT = `You are the GMBTE Business Mentor AI — a warm, practical, encouraging mentor for young African entrepreneurs and tech talent using the GMBTE platform. Give concrete, actionable business advice (pricing, strategy, validation, funding, operations, growth). Keep answers conversational and focused — a few short paragraphs, not an essay, unless the user asks for depth. Don't mention that you're a fallback or backup system.`;
+const MENTOR_SYSTEM_PROMPT = `You are the GMBTE Business Mentor AI — a warm, practical, encouraging mentor for young African entrepreneurs and tech talent using the GMBTE platform. Give concrete, actionable business advice (pricing, strategy, validation, funding, operations, growth). Keep answers conversational and focused — a few short paragraphs, not an essay, unless the user asks for depth. Write in plain conversational text only — no markdown formatting (no #, **, tables, or --- dividers); use plain sentences and, if you need a list, simple dashes on their own lines. Don't mention that you're a fallback or backup system.`;
 
 // ─── Service ───────────────────────────────────────────────────────────
 @Injectable()
@@ -73,7 +74,7 @@ export class MentorAiService {
     const history = await this.buildHistory(chat.id);
 
     // 4. Call the AI API
-    const aiReply = await this.fetchAiReply(message, history);
+    const aiReply = sanitizeAiText(await this.fetchAiReply(message, history));
 
     // 5. Persist the assistant message
     const assistantMessage = await this.prisma.mentorMessage.create({

@@ -7,6 +7,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { ChatSender, ChatVisitorType } from '@prisma/client';
+import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 
 @Injectable()
 export class ChatbotService {
@@ -74,7 +75,7 @@ export class ChatbotService {
                 );
             }
 
-            const answer = response.data?.answer || 'No response received.';
+            const answer = sanitizeAiText(response.data?.answer || 'No response received.');
 
             await this.prisma.chatMessage.create({
                 data: {

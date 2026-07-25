@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 
 interface HofApiResponse {
   answer?: string;
@@ -55,7 +56,7 @@ export class HofAiService {
         throw new BadRequestException('Hall of Fame AI returned an empty response');
       }
 
-      return { reply };
+      return { reply: sanitizeAiText(reply) };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error('Hall of Fame AI call failed', error as Error);
