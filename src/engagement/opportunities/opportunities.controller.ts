@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -8,6 +9,8 @@ import { OpportunitiesSyncService } from './opportunities-sync.service';
 import { CreateOpportunityDto } from './dto/create-opportunity.dto';
 import { UpdateOpportunityDto } from './dto/update-opportunity.dto';
 
+@ApiTags('opportunities')
+@ApiBearerAuth('access-token')
 @Controller('opportunities')
 @UseGuards(JwtAuthGuard)
 export class OpportunitiesController {
@@ -23,6 +26,10 @@ export class OpportunitiesController {
    *  table, so a removed opportunity is still visible (and restorable)
    *  instead of just vanishing. */
   @Get()
+  @ApiOperation({ summary: 'Search and filter opportunities' })
+  @ApiQuery({ name: 'search', required: false, description: 'Matches title/company/description' })
+  @ApiQuery({ name: 'category', required: false, example: 'Jobs' })
+  @ApiQuery({ name: 'includeInactive', required: false, description: 'Admin table: include removed rows' })
   findAll(
     @Query('search') search?: string,
     @Query('category') category?: string,
@@ -35,17 +42,20 @@ export class OpportunitiesController {
    *  whatever admins/sync have actually populated rather than a hardcoded
    *  enum, so a new category just works. */
   @Get('categories')
+  @ApiOperation({ summary: 'List distinct categories for filter chips/dropdown' })
   findCategories() {
     return this.opportunitiesService.findCategories();
   }
 
   /** Powers the "N New Openings" hero card. */
   @Get('count-new')
+  @ApiOperation({ summary: 'Count of new openings for the hero card' })
   countNew() {
     return this.opportunitiesService.countNew();
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a single opportunity by id' })
   findOne(@Param('id') id: string) {
     return this.opportunitiesService.findOne(id);
   }
@@ -55,6 +65,7 @@ export class OpportunitiesController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Create a manual opportunity (admin only)' })
   create(@Body() dto: CreateOpportunityDto) {
     return this.opportunitiesService.create(dto);
   }
@@ -62,6 +73,7 @@ export class OpportunitiesController {
   @Patch(':id')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update an opportunity (admin only)' })
   update(@Param('id') id: string, @Body() dto: UpdateOpportunityDto) {
     return this.opportunitiesService.update(id, dto);
   }
@@ -69,6 +81,7 @@ export class OpportunitiesController {
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Soft-remove an opportunity (admin only)' })
   remove(@Param('id') id: string) {
     return this.opportunitiesService.remove(id);
   }
@@ -81,6 +94,7 @@ export class OpportunitiesController {
   @Post('sync')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Manually trigger a sync from the external provider (admin only)' })
   sync(@Query('query') query?: string) {
     return this.syncService.syncNow(query);
   }
