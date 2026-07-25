@@ -23,12 +23,10 @@ if not _origins and settings.ENVIRONMENT == "development":
     _origins = ["http://localhost:3000", "http://localhost:5173"]
 
 
-print("CORS:", settings.allowed_origins_list)
+logger.info("CORS allowed origins: %s", _origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://gmbtefro-pfst.vercel.app",
-    ],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

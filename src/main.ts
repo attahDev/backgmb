@@ -1,4 +1,5 @@
 import { NestFactory, Reflector } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe, ClassSerializerInterceptor } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -6,7 +7,15 @@ import { ResponseInterceptor } from './interceptors/response/response.intercepto
 import { AllExceptionsFilter } from './filters/all-exceptions/all-exceptions.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Render sits in front of us as a reverse proxy. Without this, Express
+  // ignores X-Forwarded-For and req.ip resolves to Render's internal proxy
+  // IP for every request from every user — which means ThrottlerGuard's
+  // per-IP rate limit is actually shared across the whole platform instead
+  // of being per-visitor. `1` = trust the first hop (Render), not the full
+  // chain, so a client can't spoof X-Forwarded-For to dodge the limit.
+  app.set('trust proxy', 1);
 
 app.enableCors({
   origin: [

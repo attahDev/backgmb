@@ -68,6 +68,23 @@ export class CoursesService {
     });
   }
 
+  /** Batched version of findModules for dashboard loads that need modules
+   *  for several courses at once (e.g. the course list page) — one round
+   *  trip instead of one request per course. Silently skips ids that don't
+   *  exist rather than 404ing the whole batch over one bad id. */
+  async findModulesForCourses(courseIds: string[]) {
+    const modules = await this.prisma.module.findMany({
+      where: { courseId: { in: courseIds } },
+      orderBy: { order: 'asc' },
+    });
+
+    const byCourse = new Map<string, typeof modules>();
+    for (const id of courseIds) byCourse.set(id, []);
+    for (const m of modules) byCourse.get(m.courseId)?.push(m);
+
+    return Object.fromEntries(byCourse);
+  }
+
   async findModulesBySlug(courseSlug: string) {
     const course = await this.findBySlug(courseSlug);
     const modules = await this.prisma.module.findMany({

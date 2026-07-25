@@ -42,6 +42,18 @@ export class CoursesController {
     return this.coursesService.findAllWithProgress(user.userId, category, includeInactive === 'true');
   }
 
+  /** ?ids=a,b,c,d — one round trip for a course list page that used to fire
+   *  one GET .../modules request per course. Returns { [courseId]: Module[] },
+   *  same shape you'd build client-side by keying the per-course responses.
+   *  Must be registered before the ':id' route below — Nest/Express match
+   *  routes in registration order, so ':id' would otherwise swallow
+   *  /courses/modules as id='modules'. */
+  @Get('modules')
+  findModulesBatch(@Query('ids') ids: string) {
+    const courseIds = (ids ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+    return this.coursesService.findModulesForCourses(courseIds);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.coursesService.findOne(id);
