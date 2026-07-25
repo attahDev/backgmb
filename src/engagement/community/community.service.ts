@@ -592,6 +592,7 @@ export class CommunityService {
 
         data: {
           status: PostStatus.APPROVED,
+          approvedAt: new Date(),
         },
 
       });
