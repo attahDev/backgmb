@@ -20,6 +20,7 @@ import { UploadsModule } from './uploads/uploads.module';
 import { HofAiModule } from './hof-ai/hof-ai.module';
 import { FellowshipAiModule } from './fellowship-ai/fellowship-ai.module';
 import { GreenAiModule } from './green-ai/green-ai.module';
+import { SearchModule } from './search/search.module';
 
 
 @Module({
@@ -51,6 +52,7 @@ import { GreenAiModule } from './green-ai/green-ai.module';
     HofAiModule,
     FellowshipAiModule,
     GreenAiModule,
+    SearchModule,
   ],
   controllers: [AppController],
   providers: [AppService],
