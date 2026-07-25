@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 
 export type AdvisorCard = {
   title: string;
@@ -17,9 +16,9 @@ const CARDS_SYSTEM_PROMPT = `You are the AI Green Advisor for GMBTE, a sustainab
     { "title": string, "description": string (1-2 concrete, encouraging sentences referencing their actual data where possible), "variant": "danger" | "info" | "neutral", "badge": string (optional, e.g. "High Priority") }
   ]
 }
-Return exactly 3 cards. Be specific and personal — reference real numbers/areas from the data given rather than generic advice. Write plain conversational text only in title and description — no markdown formatting (no #, **, tables, or --- dividers). If the user has no logged activity yet, gently nudge them to log their first green action instead of inventing data.`;
+Return exactly 3 cards. Be specific and personal — reference real numbers/areas from the data given rather than generic advice. If the user has no logged activity yet, gently nudge them to log their first green action instead of inventing data.`;
 
-const CHAT_SYSTEM_PROMPT = `You are the AI Green Advisor for GMBTE, a friendly, knowledgeable sustainability coach for young African tech talent. You'll be given a JSON summary of the user's real logged green actions, supported green projects, and eco-credit activity, followed by their question. Answer directly and helpfully, referencing their real data where relevant. Keep answers conversational and concise (2-5 sentences unless they ask for more detail). Write in plain conversational text only — no markdown formatting (no #, **, tables, or --- dividers); use plain sentences and, if you need a list, simple dashes on their own lines. If they ask something outside sustainability/climate/green-impact, gently steer back to what you can help with. Never invent activity they haven't logged.`;
+const CHAT_SYSTEM_PROMPT = `You are the AI Green Advisor for GMBTE, a friendly, knowledgeable sustainability coach for young African tech talent. You'll be given a JSON summary of the user's real logged green actions, supported green projects, and eco-credit activity, followed by their question. Answer directly and helpfully, referencing their real data where relevant. Keep answers conversational and concise (2-5 sentences unless they ask for more detail). If they ask something outside sustainability/climate/green-impact, gently steer back to what you can help with. Never invent activity they haven't logged.`;
 
 /**
  * Real AI Green Advisor: pulls the user's actual green-impact data
@@ -68,11 +67,7 @@ export class GreenAiService {
       if (!Array.isArray(parsed.cards) || parsed.cards.length === 0) {
         return this.fallbackCards(hasActivity);
       }
-      return parsed.cards.map((card) => ({
-        ...card,
-        title: sanitizeAiText(card.title),
-        description: sanitizeAiText(card.description),
-      }));
+      return parsed.cards;
     } catch (error) {
       this.logger.error('Green Advisor AI call failed', error as Error);
       return this.fallbackCards(hasActivity);
@@ -115,7 +110,7 @@ export class GreenAiService {
       if (!reply) {
         throw new BadRequestException('Green Advisor AI returned an empty response');
       }
-      return { reply: sanitizeAiText(reply) };
+      return { reply };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error('Green Advisor AI chat failed', error as Error);

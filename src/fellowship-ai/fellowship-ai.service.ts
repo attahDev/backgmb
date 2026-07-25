@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 
 interface FellowshipApiResponse {
   answer?: string;
@@ -54,7 +53,7 @@ export class FellowshipAiService {
         throw new BadRequestException('Fellowship AI returned an empty response');
       }
 
-      return { reply: sanitizeAiText(reply) };
+      return { reply };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error('Fellowship AI call failed', error as Error);

@@ -9,8 +9,7 @@ import { OtpModule } from './otp/otp.module';
 import { ConfigModule } from '@nestjs/config';
 import { RefreshTokenModule } from './refresh-token/refresh-token.module';
 import { ContactModule } from './contact/contact.module';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { MentorAiModule } from './mentor-ai/mentor-ai.module';
 import { BusinessPlannerModule } from './business-planner/business-planner.module';
@@ -27,14 +26,8 @@ import { GreenAiModule } from './green-ai/green-ai.module';
   imports: [
     ThrottlerModule.forRoot([
       {
-        name: 'default',
-        ttl: 60_000, // @nestjs/throttler v6 ttl is in milliseconds — 60_000 = 60s
-        limit: 120, // general API traffic per IP (dashboard fires several calls per load)
-      },
-      {
-        name: 'ai',
-        ttl: 60_000,
-        limit: 10, // tighter cap for endpoints that call a paid AI/data provider per request
+        ttl: 60, // seconds
+        limit: 10, // max 10 requests per minute per IP
       },
     ]),
     ConfigModule.forRoot({
@@ -48,6 +41,7 @@ import { GreenAiModule } from './green-ai/green-ai.module';
     OtpModule,
     RefreshTokenModule,
     ContactModule,
+    ContactModule,
     MentorAiModule,
     BusinessPlannerModule,
     ChatbotModule,
@@ -59,12 +53,6 @@ import { GreenAiModule } from './green-ai/green-ai.module';
     GreenAiModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
-  ],
+  providers: [AppService],
 })
 export class AppModule {}
