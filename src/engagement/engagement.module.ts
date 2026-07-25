@@ -30,6 +30,7 @@ import { EventsController } from './events/events.controller';
 
 import { CommunityService } from './community/community.service';
 import { CommunityController } from './community/community.controller';
+import { CommunityCleanupService } from './community/community-cleanup.service';
 
 import { DashboardService } from './dashboard/dashboard.service';
 import { DashboardController } from './dashboard/dashboard.controller';
@@ -111,6 +112,7 @@ import { BadgesController } from './badges/badges.controller';
     EventsService,
 
     CommunityService,
+    CommunityCleanupService,
 
     DashboardService,
 
