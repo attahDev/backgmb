@@ -17,6 +17,9 @@ import { ChatbotModule } from './chatbot/chatbot.module';
 import { BrandIdentityModule } from './brand-identity/brand-identity.module';
 import { EngagementModule } from './engagement/engagement.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { HofAiModule } from './hof-ai/hof-ai.module';
+import { FellowshipAiModule } from './fellowship-ai/fellowship-ai.module';
+import { GreenAiModule } from './green-ai/green-ai.module';
 
 
 @Module({
@@ -45,6 +48,9 @@ import { UploadsModule } from './uploads/uploads.module';
     BrandIdentityModule,
     EngagementModule,
     UploadsModule,
+    HofAiModule,
+    FellowshipAiModule,
+    GreenAiModule,
   ],
   controllers: [AppController],
   providers: [AppService],
