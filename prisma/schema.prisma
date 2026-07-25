@@ -854,13 +854,15 @@ model SpotlightStory {
 
   isPublished Boolean @default(false)
 
-  createdAt DateTime @default(now())
+  createdAt  DateTime  @default(now())
+  approvedAt DateTime?
 
   likedBy     SpotlightLike[]
   commentList Comment[]
 
   @@index([status])
   @@index([isPublished])
+  @@index([status, approvedAt])
   @@map("spotlight_stories")
 }
 
