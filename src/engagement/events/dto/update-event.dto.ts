@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { EventAudience } from '@prisma/client';
 
 export class UpdateEventDto {
   @IsOptional() @IsString() @IsNotEmpty() title?: string;
@@ -12,5 +13,6 @@ export class UpdateEventDto {
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsBoolean() isFeatured?: boolean;
   @IsOptional() @IsBoolean() isCompleted?: boolean;
+  @IsOptional() @IsEnum(EventAudience) audience?: EventAudience;
   @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
 }

@@ -14,7 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { UserRole } from '@prisma/client';
+import { EventAudience, UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
 import { Roles } from '../../decorators/roles.decorator';
@@ -28,24 +28,32 @@ import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 export class EventsController {
   constructor(private eventsService: EventsService) {}
 
+  /** ?audience=HALL_OF_FAME switches these three public routes to hofgmbte's
+   *  events instead of gmbtefro's — invalid/missing values fall back to
+   *  GENERAL rather than throwing, since these are public unauthenticated
+   *  routes and a typo shouldn't 400 a page load. */
+  private parseAudience(audience?: string): EventAudience {
+    return audience === EventAudience.HALL_OF_FAME ? EventAudience.HALL_OF_FAME : EventAudience.GENERAL;
+  }
+
   /** Public — the marketing site's Events page calls this unauthenticated. */
   @Get()
-  findUpcoming(@Query('includeInactive') includeInactive?: string) {
-    return this.eventsService.findUpcoming(includeInactive === 'true');
+  findUpcoming(@Query('includeInactive') includeInactive?: string, @Query('audience') audience?: string) {
+    return this.eventsService.findUpcoming(includeInactive === 'true', this.parseAudience(audience));
   }
 
   /** "View All Events" — public, upcoming/non-completed archive for the
    *  public Events page's expand action. */
   @Get('all')
-  findAllArchive() {
-    return this.eventsService.findAll();
+  findAllArchive(@Query('audience') audience?: string) {
+    return this.eventsService.findAll(this.parseAudience(audience));
   }
 
   /** Public — "Our Past Events / Highlights from Previous Editions" on the
    *  public Events page. */
   @Get('past')
-  findPastEvents() {
-    return this.eventsService.findPastEvents();
+  findPastEvents(@Query('audience') audience?: string) {
+    return this.eventsService.findPastEvents(this.parseAudience(audience));
   }
 
   /** Powers the "My Events" dashboard — Upcoming / Attended / Saved tabs and

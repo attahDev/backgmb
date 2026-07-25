@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { EventAudience } from '@prisma/client';
 
 export class CreateEventDto {
   @IsString()
@@ -39,6 +40,13 @@ export class CreateEventDto {
   @IsOptional()
   @IsBoolean()
   isFeatured?: boolean;
+
+  // Which public Events page this shows on — gmbtefro (GENERAL, default)
+  // or the Hall of Fame site (HALL_OF_FAME). See schema comment on
+  // Event.audience.
+  @IsOptional()
+  @IsEnum(EventAudience)
+  audience?: EventAudience;
 
   @IsOptional()
   @IsArray()

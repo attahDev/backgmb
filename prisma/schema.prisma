@@ -711,6 +711,14 @@ model Event {
   // publicly visible once an admin approves them — see findUpcoming/findAll.
   reviewStatus PostStatus  @default(APPROVED)
 
+  // GENERAL = shown on the main GMBTE Events page/dashboard (gmbtefro).
+  // HALL_OF_FAME = shown on the Hall of Fame site's Events page (hofgmbte)
+  // instead — induction ceremonies, regional recognition, legacy events.
+  // A real enum (not a tag) because it gates which frontend's public
+  // listing an event appears in, same reasoning as source/reviewStatus
+  // above — not open-ended like mode/tags.
+  audience EventAudience @default(GENERAL)
+
   createdById String?
   createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
@@ -730,12 +738,18 @@ model Event {
   @@index([isActive])
   @@index([startsAt])
   @@index([reviewStatus])
+  @@index([audience])
   @@map("events")
 }
 
 enum EventSource {
   ADMIN
   USER
+}
+
+enum EventAudience {
+  GENERAL
+  HALL_OF_FAME
 }
 
 model EventAttendance {
@@ -854,15 +868,13 @@ model SpotlightStory {
 
   isPublished Boolean @default(false)
 
-  createdAt  DateTime  @default(now())
-  approvedAt DateTime?
+  createdAt DateTime @default(now())
 
   likedBy     SpotlightLike[]
   commentList Comment[]
 
   @@index([status])
   @@index([isPublished])
-  @@index([status, approvedAt])
   @@map("spotlight_stories")
 }
 

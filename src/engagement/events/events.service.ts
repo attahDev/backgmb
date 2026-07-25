@@ -4,7 +4,7 @@ import { ActivityService } from '../activity/activity.service';
 import { BadgesService } from '../badges/badges.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadsService } from '../../uploads/uploads.service';
-import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
+import { NotificationCategory, EventSource, PostStatus, EventAudience } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CreateCommunityEventDto } from './dto/create-community-event.dto';
@@ -26,13 +26,18 @@ export class EventsService {
     private badgesService: BadgesService,
   ) {}
 
-  async findUpcoming(includeInactive = false) {
+  async findUpcoming(includeInactive = false, audience: EventAudience = EventAudience.GENERAL) {
     return this.prisma.event.findMany({
       where: {
         // Community submissions stay off every public listing until an
         // admin approves them — includeInactive is for admin tooling and
         // still shouldn't surface someone else's pending/rejected event.
         reviewStatus: PostStatus.APPROVED,
+        // includeInactive is only ever sent by the admin table, which
+        // manages events for both audiences at once — audience filtering
+        // is a public-page concern, not something admin should be
+        // silently scoped by.
+        ...(includeInactive ? {} : { audience }),
         ...(includeInactive
           ? {}
           : { isActive: true, isCompleted: false, startsAt: { gte: new Date() } }),
@@ -51,18 +56,18 @@ export class EventsService {
   /** "View All Events" — the public page's expand action. Deliberately
    *  excludes completed events: those move to the separate Past Events /
    *  Highlights section (findPastEvents), not this archive. */
-  async findAll() {
+  async findAll(audience: EventAudience = EventAudience.GENERAL) {
     return this.prisma.event.findMany({
-      where: { isActive: true, isCompleted: false, reviewStatus: PostStatus.APPROVED },
+      where: { isActive: true, isCompleted: false, reviewStatus: PostStatus.APPROVED, audience },
       orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
     });
   }
 
   /** "Our Past Events" / "Highlights from Previous Editions" on the public
    *  Events page. Most recent first, so the newest recap leads. */
-  async findPastEvents() {
+  async findPastEvents(audience: EventAudience = EventAudience.GENERAL) {
     return this.prisma.event.findMany({
-      where: { isActive: true, isCompleted: true, reviewStatus: PostStatus.APPROVED },
+      where: { isActive: true, isCompleted: true, reviewStatus: PostStatus.APPROVED, audience },
       orderBy: { startsAt: 'desc' },
     });
   }
@@ -194,6 +199,7 @@ export class EventsService {
         endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
         isActive: dto.isActive ?? true,
         isFeatured: dto.isFeatured ?? false,
+        audience: dto.audience ?? EventAudience.GENERAL,
         source: EventSource.ADMIN,
         reviewStatus: PostStatus.APPROVED,
       },
@@ -322,6 +328,7 @@ export class EventsService {
         ...(dto.isFeatured !== undefined && { isFeatured: dto.isFeatured }),
         ...(dto.isCompleted !== undefined && { isCompleted: dto.isCompleted }),
         ...(dto.tags !== undefined && { tags: dto.tags }),
+        ...(dto.audience !== undefined && { audience: dto.audience }),
       },
     });
   }
