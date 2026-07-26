@@ -236,6 +236,51 @@ export class CareerPathsService {
     }
   }
 
+  /** Mentors whose listed skills best overlap with the mentee's chosen career path's
+   *  required skills — ranked by number (and importance-weight) of matching skills. */
+  async getRecommendedMentors(userId: string) {
+    const goal = await this.prisma.menteeCareerGoal.findUnique({
+      where: { menteeId: userId },
+      include: { careerPath: { include: { requiredSkills: true } } },
+    });
+    if (!goal) return { hasGoal: false as const, mentors: [] };
+
+    const requiredByName = new Map(
+      goal.careerPath.requiredSkills.map((s) => [normalize(s.skillName), s.weight]),
+    );
+
+    const mentors = await this.prisma.mentor.findMany({ where: { isActive: true } });
+
+    const ranked = mentors
+      .map((mentor) => {
+        const matchedSkills = mentor.skills.filter((skill) => requiredByName.has(normalize(skill)));
+        const score = matchedSkills.reduce(
+          (sum, skill) => sum + (requiredByName.get(normalize(skill)) ?? 0),
+          0,
+        );
+        return { mentor, matchedSkills, score };
+      })
+      .filter((m) => m.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+
+    return {
+      hasGoal: true as const,
+      careerPath: { id: goal.careerPath.id, title: goal.careerPath.title },
+      mentors: ranked.map(({ mentor, matchedSkills, score }) => ({
+        id: mentor.id,
+        name: mentor.name,
+        role: mentor.role,
+        company: mentor.company,
+        avatarUrl: mentor.avatarUrl,
+        bio: mentor.bio,
+        category: mentor.category,
+        matchedSkills,
+        matchScore: score,
+      })),
+    };
+  }
+
   // ───────────────────────── Admin ─────────────────────────
 
   /** Admin trigger to have the AI regenerate the whole directory from
