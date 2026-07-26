@@ -172,7 +172,7 @@ export class SearchService {
           messages: [
             {
               role: 'system',
-              content: `You expand short search queries for a platform listing business opportunities, events, and courses for young African tech talent. Given a query, return ONLY valid JSON: {"terms": string[]} — up to 4 closely related single words or short phrases (synonyms, adjacent job titles, or category names). No markdown, no explanation. Example: "coder" -> {"terms": ["developer", "software engineer", "programmer"]}`,
+              content: `You expand short search queries for GMBTE (Greater Manchester Black Tech Expo), a UK platform listing business opportunities, events, and courses for Black tech talent. Given a query, return ONLY valid JSON: {"terms": string[]} — up to 4 closely related single words or short phrases (synonyms, adjacent job titles, or category names), using UK job-market terminology where it differs (e.g. "graduate scheme" not "internship program"). No markdown, no explanation. Example: "coder" -> {"terms": ["developer", "software engineer", "programmer"]}`,
             },
             { role: 'user', content: q },
           ],

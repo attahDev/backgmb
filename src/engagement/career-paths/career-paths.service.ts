@@ -29,7 +29,7 @@ const PATH_GENERATION_SYSTEM_PROMPT = `You design career readiness tracks for a 
     }
   ]
 }
-Generate 6 distinct, common tech career paths relevant to early-career African tech talent (engineering, design, data, product, cybersecurity, marketing/growth — pick a good spread). Each path needs 5-8 concrete, specific requiredSkills (not vague like "communication" — prefer things like "REST API design" or "Figma prototyping"). Don't invent paths beyond what's asked.`;
+Generate 6 distinct, common tech career paths relevant to early-career Black tech talent in the UK (engineering, design, data, product, cybersecurity, marketing/growth — pick a good spread), using UK job-market conventions (e.g. "graduate scheme", job titles as they're used by UK employers). Each path needs 5-8 concrete, specific requiredSkills (not vague like "communication" — prefer things like "REST API design" or "Figma prototyping"). Don't invent paths beyond what's asked.`;
 
 function normalize(name: string) {
   return name.trim().toLowerCase();
@@ -110,39 +110,6 @@ export class CareerPathsService {
     } catch {
       // seed attempt failed — leave the directory empty, next call retries
     }
-  }
-
-  /** Mentors whose listed skills best overlap the mentee's chosen path's
-   *  required skills — the natural next step after "here's what you're
-   *  missing" is "here's who can help you close that gap". */
-  async getRecommendedMentors(userId: string) {
-    const goal = await this.prisma.menteeCareerGoal.findUnique({
-      where: { menteeId: userId },
-      include: { careerPath: { include: { requiredSkills: true } } },
-    });
-    if (!goal) return [];
-
-    const requiredNames = new Set(goal.careerPath.requiredSkills.map((s) => normalize(s.skillName)));
-    const mentors = await this.prisma.mentor.findMany({ where: { isActive: true } });
-
-    const scored = mentors
-      .map((mentor) => {
-        const matchedSkills = mentor.skills.filter((skill) => requiredNames.has(normalize(skill)));
-        return { mentor, matchedSkills };
-      })
-      .filter((entry) => entry.matchedSkills.length > 0)
-      .sort((a, b) => b.matchedSkills.length - a.matchedSkills.length)
-      .slice(0, 6);
-
-    return scored.map(({ mentor, matchedSkills }) => ({
-      id: mentor.id,
-      name: mentor.name,
-      role: mentor.role,
-      company: mentor.company,
-      avatarUrl: mentor.avatarUrl,
-      category: mentor.category,
-      matchedSkills,
-    }));
   }
 
   async setMyGoal(userId: string, careerPathId: string) {

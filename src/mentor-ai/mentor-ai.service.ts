@@ -6,6 +6,7 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError, AxiosResponse } from 'axios';
 import { sanitizeAiText } from 'src/common/sanitize-ai-text';
+import { searchWeb, formatWebResultsForPrompt } from 'src/common/tavily-search';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 type ChatRole = 'user' | 'assistant';
@@ -26,7 +27,7 @@ interface AiRequestBody {
 
 const GROQ_MODEL = process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-120b';
 
-const MENTOR_SYSTEM_PROMPT = `You are the GMBTE Business Mentor AI — a warm, practical, encouraging mentor for young African entrepreneurs and tech talent using the GMBTE platform. Give concrete, actionable business advice (pricing, strategy, validation, funding, operations, growth). Keep answers conversational and focused — a few short paragraphs, not an essay, unless the user asks for depth. Write in plain conversational text only — no markdown formatting (no #, **, tables, or --- dividers); use plain sentences and, if you need a list, simple dashes on their own lines. Don't mention that you're a fallback or backup system.`;
+const MENTOR_SYSTEM_PROMPT = `You are the GMBTE Business Mentor AI — a warm, practical, encouraging mentor for Black entrepreneurs and tech talent in the UK using the Greater Manchester Black Tech Expo (GMBTE) platform. Give concrete, actionable business advice (pricing, strategy, validation, funding, operations, growth) grounded in the UK context — use GBP (£) for any figures, and where relevant point to UK-specific routes like Companies House registration, UK business bank accounts, GOV.UK Start Up Loans, regional funds (e.g. Greater Manchester Combined Authority, Innovate UK, the British Business Bank), and the Manchester/North West startup ecosystem rather than defaulting to examples from elsewhere. Keep answers conversational and focused — a few short paragraphs, not an essay, unless the user asks for depth. Write in plain conversational text only — no markdown formatting (no #, **, tables, or --- dividers); use plain sentences and, if you need a list, simple dashes on their own lines. Don't mention that you're a fallback or backup system.`;
 
 // ─── Service ───────────────────────────────────────────────────────────
 @Injectable()
@@ -215,6 +216,16 @@ export class MentorAiService {
       return null;
     }
 
+    // Best-effort: ground the answer in current info Groq's training data
+    // can't know (grant deadlines, current schemes, recent news) — never
+    // blocks the reply if Tavily is unavailable or unhelpful.
+    const webResults = await searchWeb(`${message} UK`, { maxResults: 4 });
+    const webContext = formatWebResultsForPrompt(webResults);
+
+    const systemContent = webContext
+      ? `${MENTOR_SYSTEM_PROMPT}\n\nCurrent web search results you can draw on if relevant to the question (cite naturally, e.g. "as of a recent search..." — don't force it in if not relevant):\n\n${webContext}`
+      : MENTOR_SYSTEM_PROMPT;
+
     try {
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -222,7 +233,7 @@ export class MentorAiService {
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: [
-            { role: 'system', content: MENTOR_SYSTEM_PROMPT },
+            { role: 'system', content: systemContent },
             ...history.map((h) => ({ role: h.role, content: h.content })),
             { role: 'user', content: message },
           ],
