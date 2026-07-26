@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { HofAiService } from './hof-ai.service';
 import { HofChatDto } from './dto/chat.dto';
@@ -9,7 +9,8 @@ export class HofAiController {
 
   @UseGuards(JwtAuthGuard)
   @Post('chat')
-  chat(@Body() dto: HofChatDto) {
-    return this.hofAiService.chat(dto.message);
+  chat(@Body() dto: HofChatDto, @Req() req: any) {
+    const userId = req.user?.id ?? req.user?.sub ?? req.user?.userId;
+    return this.hofAiService.chat(dto.message, userId);
   }
 }

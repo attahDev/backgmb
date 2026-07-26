@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = []
     RATE_LIMIT_PER_MINUTE: int = 3
     RATE_LIMIT_PER_HOUR: int = 20
+    MAIN_BACKEND_URL: str = "https://backgmb.onrender.com"
+    INTERNAL_ACTIVITY_SECRET: str = ""
 
     class Config:
         env_file = ".env"

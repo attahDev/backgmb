@@ -55,4 +55,31 @@ export class ContactService {
       },
     });
   }
+
+  // ───────────────────────── Admin: read-only listings ─────────────────────────
+  // Powers the admin portal's Overview page. These cover people who may not
+  // even be registered users (a newsletter signup or a contact message can
+  // come from anyone), which is why they're separate from ActivityLog —
+  // ActivityLog always requires a userId, these never do.
+
+  async findAllMessages(limit = 50) {
+    return this.prisma.contactMessage.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async findAllSubscriptions(limit = 50) {
+    return this.prisma.newsletterSubscription.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async findAllPartnerRequests(limit = 50) {
+    return this.prisma.partnerRequest.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
 }

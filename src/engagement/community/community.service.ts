@@ -9,6 +9,7 @@ import { PostStatus, NotificationCategory } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../../uploads/uploads.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ActivityService } from '../activity/activity.service';
 
 const AVATAR_COLORS = [
   'bg-red-600',
@@ -24,6 +25,7 @@ export class CommunityService {
     private prisma: PrismaService,
     private uploadsService: UploadsService,
     private notificationsService: NotificationsService,
+    private activityService: ActivityService,
   ) {}
 
   async findFeed(userId?: string, limit = 30) {
@@ -278,6 +280,13 @@ export class CommunityService {
           storyId: post.id,
         },
       },
+    );
+
+    await this.activityService.log(
+      userId,
+      'COMMUNITY_POST_SUBMITTED',
+      `Submitted "${post.title}" to the community feed`,
+      { storyId: post.id },
     );
 
 

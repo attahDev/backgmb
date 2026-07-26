@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { sanitizeAiText } from 'src/common/sanitize-ai-text';
+import { ActivityService } from 'src/engagement/activity/activity.service';
 
 interface HofApiResponse {
   answer?: string;
@@ -24,7 +25,9 @@ export class HofAiService {
     process.env.HOF_AI_API_URL ??
     'https://olayimika01-hall-of-fame.hf.space/api/v1/chat';
 
-  async chat(message: string): Promise<{ reply: string }> {
+  constructor(private readonly activityService: ActivityService) {}
+
+  async chat(message: string, userId?: string): Promise<{ reply: string }> {
     if (!message?.trim()) {
       throw new BadRequestException('Message is required');
     }
@@ -54,6 +57,14 @@ export class HofAiService {
 
       if (!reply) {
         throw new BadRequestException('Hall of Fame AI returned an empty response');
+      }
+
+      if (userId) {
+        await this.activityService.logThrottled(
+          userId,
+          'HOF_AI_CHAT',
+          'Asked the Hall of Fame AI a question',
+        );
       }
 
       return { reply: sanitizeAiText(reply) };

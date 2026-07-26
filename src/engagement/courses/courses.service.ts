@@ -152,6 +152,13 @@ export class CoursesService {
     const completedSectionIds = Array.from(current);
     const isCompleted = sectionIds.length > 0 && sectionIds.every((id) => current.has(id));
 
+    // Was this the user's first touch on this course at all? Checked before
+    // the upsert below creates the CourseProgress row, since after that it's
+    // too late to tell "just started" apart from "already in progress".
+    const hadCourseProgress = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId: course.id } },
+    });
+
     const moduleProgress = await this.prisma.moduleProgress.upsert({
       where: { userId_moduleId: { userId, moduleId: module.id } },
       update: {
@@ -167,6 +174,12 @@ export class CoursesService {
         completedAt: isCompleted ? new Date() : null,
       },
     });
+
+    if (!hadCourseProgress) {
+      await this.activityService.log(userId, 'COURSE_STARTED', `Started ${course.title}`, {
+        courseId: course.id,
+      });
+    }
 
     await this.recomputeCourseProgress(userId, course.id);
 

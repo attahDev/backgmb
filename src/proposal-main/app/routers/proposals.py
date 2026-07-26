@@ -19,6 +19,7 @@ from app.schemas.proposal import (
     ProposalUpdateRequest,
 )
 from app.services import groq_service, pdf_service, docx_service
+from app.services.activity_report import report_activity
 from app.services.rate_limiter import RateLimitExceeded, enforce_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,13 @@ async def generate_proposal(
     db.add(proposal)
     await db.commit()
     await db.refresh(proposal)
+
+    await report_activity(
+        user_id,
+        "PROPOSAL_GENERATED",
+        f'Generated a proposal "{proposal.title}"',
+        {"proposalId": str(proposal.id)},
+    )
 
     return _to_response(proposal)
 

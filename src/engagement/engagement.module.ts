@@ -6,7 +6,7 @@ import { UploadsModule } from '../uploads/uploads.module';
 import { RolesGuard } from '../guards/roles.guard';
 
 import { ActivityService } from './activity/activity.service';
-import { ActivityController } from './activity/activity.controller';
+import { ActivityController, ActivityInternalController } from './activity/activity.controller';
 
 import { NotificationsService } from './notifications/notifications.service';
 import { NotificationsController } from './notifications/notifications.controller';
@@ -65,6 +65,7 @@ import { BadgesController } from './badges/badges.controller';
 
   controllers: [
     ActivityController,
+    ActivityInternalController,
     NotificationsController,
 
     MentorsController,

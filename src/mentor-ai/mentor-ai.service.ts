@@ -7,6 +7,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError, AxiosResponse } from 'axios';
 import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 import { searchWeb, formatWebResultsForPrompt } from 'src/common/tavily-search';
+import { ActivityService } from 'src/engagement/activity/activity.service';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 type ChatRole = 'user' | 'assistant';
@@ -44,6 +45,7 @@ export class MentorAiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly httpService: HttpService,
+    private readonly activityService: ActivityService,
   ) {}
 
   /**
@@ -60,7 +62,17 @@ export class MentorAiService {
     }
 
     // 1. Resolve or create the conversation
+    const isNewChat = !chatId;
     const chat = await this.resolveChat(userId, message, chatId);
+
+    if (isNewChat) {
+      await this.activityService.log(
+        userId,
+        'MENTOR_AI_CHAT',
+        'Started a conversation with the Business Mentor AI',
+        { chatId: chat.id },
+      );
+    }
 
     // 2. Save the user message
     await this.prisma.mentorMessage.create({

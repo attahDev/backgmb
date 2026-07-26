@@ -4,6 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { GenerateBusinessPlanDto } from './dto/generate-business-plan.dto';
+import { ActivityService } from 'src/engagement/activity/activity.service';
 
 @Injectable()
 export class BusinessPlannerService {
@@ -16,6 +17,7 @@ export class BusinessPlannerService {
   constructor(
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService,
+    private readonly activityService: ActivityService,
   ) {}
 
   async generatePlan(userId: string, payload: GenerateBusinessPlanDto) {
@@ -50,6 +52,13 @@ export class BusinessPlannerService {
           aiResponse: response.data,
         },
       });
+
+      await this.activityService.log(
+        userId,
+        'BUSINESS_PLAN_GENERATED',
+        `Generated a business plan for "${payload.business_idea}"`,
+        { planId: savedPlan.id },
+      );
 
       return {
         success: true,

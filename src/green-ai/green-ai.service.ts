@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { sanitizeAiText } from 'src/common/sanitize-ai-text';
 import { searchWeb, formatWebResultsForPrompt } from 'src/common/tavily-search';
+import { ActivityService } from 'src/engagement/activity/activity.service';
 
 export type AdvisorCard = {
   title: string;
@@ -34,7 +35,10 @@ const CHAT_SYSTEM_PROMPT = `You are the AI Green Advisor for GMBTE (Greater Manc
 export class GreenAiService {
   private readonly logger = new Logger(GreenAiService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activityService: ActivityService,
+  ) {}
 
   async getAdvice(userId: string): Promise<AdvisorCard[]> {
     const { dataSummary, hasActivity } = await this.buildDataSummary(userId);
@@ -125,6 +129,13 @@ export class GreenAiService {
       if (!reply) {
         throw new BadRequestException('Green Advisor AI returned an empty response');
       }
+
+      await this.activityService.logThrottled(
+        userId,
+        'GREEN_AI_CHAT',
+        'Asked the Green Advisor a question',
+      );
+
       return { reply: sanitizeAiText(reply) };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;

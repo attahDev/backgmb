@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 10
     rate_limit_per_hour: int = 100
     bypass_rate_limits: bool = True
+    main_backend_url: str = "https://backgmb.onrender.com"
+    internal_activity_secret: str = ""
 
     def get_cache_ttl(self, category: str) -> int:
         return {
