@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 
 /**
  * Pulls listings from external opportunity APIs and upserts them into the
@@ -31,10 +32,13 @@ export class OpportunitiesSyncService {
     private prisma: PrismaService,
     private http: HttpService,
     private config: ConfigService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async syncNow(query = 'sustainability') {
-    return this.syncAdzuna(query);
+    const result = await this.syncAdzuna(query);
+    this.realtime.broadcast('opportunities:updated');
+    return result;
   }
 
   private async syncAdzuna(query: string) {

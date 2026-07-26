@@ -9,6 +9,7 @@ import { PromoteMentorDto } from './dto/promote-mentor.dto';
 import { UpdateMenteeConnectionDto } from './dto/update-mentee-connection.dto';
 import { CreateMentorSpotlightDto } from './dto/create-mentor-spotlight.dto';
 import { UpdateMentorSpotlightDto } from './dto/update-mentor-spotlight.dto';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 
 @Injectable()
 export class MentorsService {
@@ -16,6 +17,7 @@ export class MentorsService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private badgesService: BadgesService,
+    private realtime: RealtimeGateway,
   ) {}
 
   /** Public mentor directory (used by "Find a Mentor"). */
@@ -69,6 +71,12 @@ export class MentorsService {
       `Requested a connection with ${mentor.name}`,
       { mentorId },
     );
+
+    // The mentee's own "My Mentors" list just gained a row, and — if this
+    // mentor is a real logged-in user, not an admin-entered profile — their
+    // "My Mentees" list just gained a pending request.
+    this.realtime.emitToUser(userId, 'mentors:updated');
+    if (mentor.userId) this.realtime.emitToUser(mentor.userId, 'mentors:updated');
 
     return connection;
   }
@@ -230,7 +238,7 @@ export class MentorsService {
   // ───────────────────────── Admin: mentor directory management ─────────────────────────
 
   async createMentor(dto: CreateMentorDto) {
-    return this.prisma.mentor.create({
+    const mentor = await this.prisma.mentor.create({
       data: {
         name: dto.name,
         role: dto.role,
@@ -242,13 +250,15 @@ export class MentorsService {
         category: dto.category?.trim() || 'General',
       },
     });
+    this.realtime.broadcast('mentors:updated');
+    return mentor;
   }
 
   async updateMentor(id: string, dto: UpdateMentorDto) {
     const mentor = await this.prisma.mentor.findUnique({ where: { id } });
     if (!mentor) throw new NotFoundException('Mentor not found');
 
-    return this.prisma.mentor.update({
+    const updated = await this.prisma.mentor.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
@@ -261,6 +271,8 @@ export class MentorsService {
         ...(dto.category !== undefined && { category: dto.category.trim() || 'General' }),
       },
     });
+    this.realtime.broadcast('mentors:updated');
+    return updated;
   }
 
   /** Soft-delete: keeps existing MentorConnection history intact and just
@@ -268,7 +280,9 @@ export class MentorsService {
   async removeMentor(id: string) {
     const mentor = await this.prisma.mentor.findUnique({ where: { id } });
     if (!mentor) throw new NotFoundException('Mentor not found');
-    return this.prisma.mentor.update({ where: { id }, data: { isActive: false } });
+    const updated = await this.prisma.mentor.update({ where: { id }, data: { isActive: false } });
+    this.realtime.broadcast('mentors:updated');
+    return updated;
   }
 
   // ───────────────────────── Admin: promote/demote a real user to mentor ─────────────────────────
@@ -310,6 +324,8 @@ export class MentorsService {
           }),
     ]);
 
+    this.realtime.broadcast('mentors:updated');
+    this.realtime.emitToUser(dto.userId, 'mentors:updated');
     return mentor;
   }
 
@@ -324,6 +340,8 @@ export class MentorsService {
       this.prisma.mentor.update({ where: { userId }, data: { isActive: false } }),
     ]);
 
+    this.realtime.broadcast('mentors:updated');
+    this.realtime.emitToUser(userId, 'mentors:updated');
     return { message: 'Mentor status revoked' };
   }
 
@@ -381,6 +399,11 @@ export class MentorsService {
       await this.badgesService.evaluate(updated.userId, 'MENTOR_CONNECTIONS');
     }
 
+    // Mentee's "My Mentors" status/next-session card and the mentor's own
+    // "My Mentees" row both changed — push to both sides of the connection.
+    this.realtime.emitToUser(updated.userId, 'mentors:updated');
+    this.realtime.emitToUser(userId, 'mentors:updated');
+
     return updated;
   }
 
@@ -411,9 +434,15 @@ export class MentorsService {
 
   async sendMessage(connectionId: string, userId: string, content: string) {
     await this.assertConnectionMember(connectionId, userId);
-    return this.prisma.menteeMessage.create({
+    const message = await this.prisma.menteeMessage.create({
       data: { connectionId, senderId: userId, content },
     });
+    // Instant push to whoever has this thread open (see RealtimeGateway
+    // 'chat:join'/'chat:room' on the frontend). The chat:join handshake
+    // already verifies the recipient is one of the two people on this
+    // connection, so nothing extra to check here.
+    this.realtime.emitToRoom(`chat:${connectionId}`, 'chat:message', message);
+    return message;
   }
 
   // ───────────────────────── Sessions ─────────────────────────
@@ -533,7 +562,7 @@ export class MentorsService {
     const mentor = await this.prisma.mentor.findUnique({ where: { id: dto.mentorId } });
     if (!mentor) throw new NotFoundException('Mentor not found');
 
-    return this.prisma.mentorSpotlight.create({
+    const spotlight = await this.prisma.mentorSpotlight.create({
       data: {
         mentorId: dto.mentorId,
         shoutout: dto.shoutout,
@@ -541,13 +570,15 @@ export class MentorsService {
       },
       include: { mentor: true },
     });
+    this.realtime.broadcast('mentors:updated');
+    return spotlight;
   }
 
   async updateSpotlight(id: string, dto: UpdateMentorSpotlightDto) {
     const spotlight = await this.prisma.mentorSpotlight.findUnique({ where: { id } });
     if (!spotlight) throw new NotFoundException('Spotlight not found');
 
-    return this.prisma.mentorSpotlight.update({
+    const updated = await this.prisma.mentorSpotlight.update({
       where: { id },
       data: {
         shoutout: dto.shoutout,
@@ -556,12 +587,15 @@ export class MentorsService {
       },
       include: { mentor: true },
     });
+    this.realtime.broadcast('mentors:updated');
+    return updated;
   }
 
   async removeSpotlight(id: string) {
     const spotlight = await this.prisma.mentorSpotlight.findUnique({ where: { id } });
     if (!spotlight) throw new NotFoundException('Spotlight not found');
     await this.prisma.mentorSpotlight.delete({ where: { id } });
+    this.realtime.broadcast('mentors:updated');
     return { message: 'Spotlight removed' };
   }
 }

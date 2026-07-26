@@ -21,6 +21,7 @@ import { HofAiModule } from './hof-ai/hof-ai.module';
 import { FellowshipAiModule } from './fellowship-ai/fellowship-ai.module';
 import { GreenAiModule } from './green-ai/green-ai.module';
 import { SearchModule } from './search/search.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 
 @Module({
@@ -53,6 +54,7 @@ import { SearchModule } from './search/search.module';
     FellowshipAiModule,
     GreenAiModule,
     SearchModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 
 /**
  * Metric keys badges can target. Add a new one here + a resolver in
@@ -22,6 +23,7 @@ export class BadgesService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private realtime: RealtimeGateway,
   ) {}
 
   /** Resolvers for "how far along is this user on this metric right now" —
@@ -83,6 +85,13 @@ export class BadgesService {
         this.activityService.log(userId, 'BADGE_EARNED', `Earned the "${b.name}" badge`, { badgeId: b.id }),
       ),
     );
+
+    // Private push to just this user — their badge grid (/badges/me) and
+    // dashboard "Badges earned" stat update without a refresh, right as
+    // the action that earned it (course completion, event RSVP, ...) lands.
+    this.realtime.emitToUser(userId, 'badges:updated', {
+      badgeIds: newlyEarned.map((b) => b.id),
+    });
   }
 
   /** Full badge grid for the profile page — earned ones plus locked ones

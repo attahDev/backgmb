@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { CreateOpportunityDto } from './dto/create-opportunity.dto';
 import { UpdateOpportunityDto } from './dto/update-opportunity.dto';
 
@@ -12,7 +13,10 @@ type FindAllOptions = {
 
 @Injectable()
 export class OpportunitiesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private realtime: RealtimeGateway,
+  ) {}
 
   async findAll({ search, category, includeInactive }: FindAllOptions = {}) {
     const where: Prisma.OpportunityWhereInput = includeInactive ? {} : { isActive: true };
@@ -62,24 +66,30 @@ export class OpportunitiesService {
     });
   }
 
-  create(dto: CreateOpportunityDto) {
-    return this.prisma.opportunity.create({
+  async create(dto: CreateOpportunityDto) {
+    const opportunity = await this.prisma.opportunity.create({
       data: {
         ...dto,
         source: 'MANUAL',
       },
     });
+    this.realtime.broadcast('opportunities:updated');
+    return opportunity;
   }
 
   async update(id: string, dto: UpdateOpportunityDto) {
     await this.findOne(id);
-    return this.prisma.opportunity.update({ where: { id }, data: dto });
+    const opportunity = await this.prisma.opportunity.update({ where: { id }, data: dto });
+    this.realtime.broadcast('opportunities:updated');
+    return opportunity;
   }
 
   async remove(id: string) {
     await this.findOne(id);
     // Soft-delete, same as Course/Event — keeps history/analytics intact
     // and lets an admin restore instead of losing the row outright.
-    return this.prisma.opportunity.update({ where: { id }, data: { isActive: false } });
+    const opportunity = await this.prisma.opportunity.update({ where: { id }, data: { isActive: false } });
+    this.realtime.broadcast('opportunities:updated');
+    return opportunity;
   }
 }
