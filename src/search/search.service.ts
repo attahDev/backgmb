@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
-export type SearchResultType = 'opportunity' | 'event' | 'course';
+export type SearchResultType = 'opportunity' | 'event' | 'course' | 'mentor' | 'hofNominee';
 
 export type SearchResult = {
   type: SearchResultType;
@@ -16,13 +16,21 @@ export type SearchResult = {
 const GROQ_MODEL = process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-120b';
 
 /**
- * Platform-wide search across Opportunities, Events, and Courses.
+ * Platform-wide search across Opportunities, Events, Courses, the Mentor
+ * directory, and approved Hall of Fame nominees.
+ *
+ * Deliberately NOT included: general platform users. There's no public
+ * member-profile page to link a result to, and surfacing every user's
+ * name in a global search (regardless of their profileVisibility setting)
+ * would be a real privacy regression — mentors and HOF nominees are the
+ * two "people" categories that are already meant to be publicly
+ * browsable and have a real destination page.
  *
  * Algorithm: each candidate row is scored by where the query matched
  * (exact title match scores highest, then title-starts-with, then
- * title-contains, then a match in description/tags/category/company/
- * location) rather than just returning an unordered `contains` dump —
- * that's the "algo" part.
+ * title-contains, then a match in a secondary field — description, tags,
+ * category, company, location, skills, bio, etc.) rather than just
+ * returning an unordered `contains` dump — that's the "algo" part.
  *
  * On top of that, if the literal keyword search comes back thin (fewer
  * than 3 total hits), we ask Groq to expand the query into related terms
@@ -67,12 +75,14 @@ export class SearchService {
   }
 
   private async runSearch(q: string): Promise<SearchResult[]> {
-    const [opportunities, events, courses] = await Promise.all([
+    const [opportunities, events, courses, mentors, hofNominees] = await Promise.all([
       this.searchOpportunities(q),
       this.searchEvents(q),
       this.searchCourses(q),
+      this.searchMentors(q),
+      this.searchHofNominees(q),
     ]);
-    return [...opportunities, ...events, ...courses];
+    return [...opportunities, ...events, ...courses, ...mentors, ...hofNominees];
   }
 
   private score(q: string, title: string): number {
@@ -158,6 +168,56 @@ export class SearchService {
     }));
   }
 
+  private async searchMentors(q: string): Promise<SearchResult[]> {
+    const rows = await this.prisma.mentor.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { role: { contains: q, mode: 'insensitive' } },
+          { company: { contains: q, mode: 'insensitive' } },
+          { bio: { contains: q, mode: 'insensitive' } },
+          { category: { contains: q, mode: 'insensitive' } },
+          { skills: { has: q } },
+        ],
+      },
+      take: 15,
+    });
+
+    return rows.map((r) => ({
+      type: 'mentor' as const,
+      id: r.id,
+      title: r.name,
+      subtitle: [r.role, r.company].filter(Boolean).join(' at ') || undefined,
+      description: r.bio ?? undefined,
+      score: this.score(q, r.name),
+    }));
+  }
+
+  /** Only approved nominations — pending/rejected ones aren't public yet. */
+  private async searchHofNominees(q: string): Promise<SearchResult[]> {
+    const rows = await this.prisma.nomination.findMany({
+      where: {
+        status: 'APPROVED',
+        OR: [
+          { nomineeName: { contains: q, mode: 'insensitive' } },
+          { category: { contains: q, mode: 'insensitive' } },
+          { story: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      take: 15,
+    });
+
+    return rows.map((r) => ({
+      type: 'hofNominee' as const,
+      id: r.id,
+      title: r.nomineeName,
+      subtitle: r.category ?? undefined,
+      description: r.story,
+      score: this.score(q, r.nomineeName),
+    }));
+  }
+
   /** Best-effort query expansion. Returns [] on any failure or missing key — never throws. */
   private async expandQueryWithGroq(q: string): Promise<string[]> {
     const apiKey = process.env.GROQ_API_KEY;
@@ -172,7 +232,7 @@ export class SearchService {
           messages: [
             {
               role: 'system',
-              content: `You expand short search queries for GMBTE (Greater Manchester Black Tech Expo), a UK platform listing business opportunities, events, and courses for Black tech talent. Given a query, return ONLY valid JSON: {"terms": string[]} — up to 4 closely related single words or short phrases (synonyms, adjacent job titles, or category names), using UK job-market terminology where it differs (e.g. "graduate scheme" not "internship program"). No markdown, no explanation. Example: "coder" -> {"terms": ["developer", "software engineer", "programmer"]}`,
+              content: `You expand short search queries for GMBTE (Greater Manchester Black Tech Expo), a UK platform listing business opportunities, events, courses, mentors, and Hall of Fame nominees for Black tech talent. Given a query, return ONLY valid JSON: {"terms": string[]} — up to 4 closely related single words or short phrases (synonyms, adjacent job titles, skill names, or category names), using UK job-market terminology where it differs (e.g. "graduate scheme" not "internship program"). No markdown, no explanation. Example: "coder" -> {"terms": ["developer", "software engineer", "programmer"]}`,
             },
             { role: 'user', content: q },
           ],
