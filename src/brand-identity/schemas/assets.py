@@ -67,11 +67,12 @@ class LetterheadInput(BrandColors):
     tagline:                Optional[str] = Field(None, max_length=150)
     logo_url:               Optional[str] = Field(None)
     registration_number:    Optional[str] = Field(None, max_length=50)
+    social_handle:          Optional[str] = Field(None, max_length=300, description="e.g. linkedin.com/company/acme")
     templated_template_id:  Optional[str] = Field(None)
 
 
 class SocialLink(BaseModel):
-    platform: str = Field(..., description="e.g. LinkedIn, Twitter")
+    platform: str = Field("Social", description="e.g. LinkedIn, Twitter")
     url:      str = Field(..., max_length=300)
 
 class EmailSignatureInput(BrandColors):

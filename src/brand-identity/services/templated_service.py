@@ -91,6 +91,7 @@ LETTERHEAD_LAYERS: dict[str, tuple[str, str]] = {
     "website":             ("text",      "website"),
     "tagline":             ("text",      "tagline"),
     "registration_number": ("text",      "registrationNumber"),
+    "social_handle":       ("text",      "socialHandle"),  # VERIFY against template layer panel
     "logo_url":            ("image_url", "logo"),
 }
 
