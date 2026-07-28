@@ -18,12 +18,12 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const SUPER_USER = {
-  email: 'admin@gmbt.dev',
-  password: 'Admin@12345!', // Change before going to prod!
+  email: 'superadmin@gmbt.dev',
+  password: 'SuperAdmin@Launch2026!', // Change before going to prod!
   firstname: 'Super',
   lastname: 'Admin',
   organization: 'GMBT',
-  role: UserRole.ENGINEER,
+  role: UserRole.ADMIN,
 };
 
 async function main() {
@@ -376,17 +376,11 @@ async function seedCatalogue() {
 }
 
 /**
- * Creates 10 pre-verified team accounts so the team can log in immediately
- * without the SMTP/OTP email step. Each gets isVerified: true directly in
- * Postgres. Passwords are printed once at the end — change them after first
- * login. Re-running is safe: existing accounts are left alone.
- */
-/**
- * Creates 15 pre-verified team accounts + a special Dr. Emilee account.
+ * Creates 25 pre-verified team accounts + a special Dr. Emilee account.
  * Accounts bypass email verification and are safe to re-run.
  */
 async function seedTeamAccounts() {
-  console.log('🌱 Seeding 15 team accounts + Dr. Emilee (bypassing email verification)...');
+  console.log('🌱 Seeding 25 team accounts + Dr. Emilee (bypassing email verification)...');
 
   const accounts = [
     ...Array.from({ length: 25 }, (_, i) => {
@@ -402,28 +396,17 @@ async function seedTeamAccounts() {
       };
     }),
 
-// Special account
+    // Special account
     {
       email: 'dr.emilee@gmbt.dev',
       password: 'DrEmilee@Launch2026!',
       firstname: 'Dr.',
       lastname: 'Emilee',
       organization: 'GMBT',
-      role: UserRole.ENGINEER, // Change to ENGINEER if preferred
+      role: UserRole.ENGINEER, // Change to ADMIN if preferred
     },
+  ];
 
-    // Superadmin account
-    {
-      email: 'superadmin@gmbt.dev',
-      password: 'SuperAdmin@Launch2026!',
-      firstname: 'Super',
-      lastname: 'Admin',
-      organization: 'GMBT',
-      role: UserRole.ADMIN,
-    },
-    ];
-
-    
   const created: typeof accounts = [];
 
   for (const acc of accounts) {
@@ -468,6 +451,7 @@ async function seedTeamAccounts() {
     console.log('ℹ️  All team accounts already existed — nothing created.');
   }
 }
+
 /**
  * Badge catalogue — definitions only (metric + target), same "admin-curated
  * catalogue, not per-user activity" reasoning as seedCatalogue() above.
