@@ -22,6 +22,8 @@ app.enableCors({
     "http://localhost:5173",
     "https://frogmbte.vercel.app",
     "https://hofgmbte.vercel.app", // hof now calls this API directly for tributes/nominations
+    "https://gmbtefro.vercel.app",
+    "https://www.gmblacktechexpo.co.uk", // optional if you still use preview deployments
   ],
   credentials: true,
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],

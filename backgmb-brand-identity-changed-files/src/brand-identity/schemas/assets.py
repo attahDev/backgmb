@@ -59,17 +59,16 @@ class BusinessCardInput(BrandColors):
 
 
 class LetterheadInput(BrandColors):
-    company_name:           str                        = Field(..., min_length=1, max_length=100)
-    company_address:        str                        = Field(..., min_length=1, max_length=300)
-    email:                  str                        = Field(..., max_length=254)
-    phone:                  str                        = Field(..., max_length=30)
-    website:                Optional[str]               = Field(None, max_length=200)
-    tagline:                Optional[str]               = Field(None, max_length=150)
-    logo_url:               Optional[str]               = Field(None)
-    registration_number:    Optional[str]               = Field(None, max_length=50)
-    content_body:           Optional[str]               = Field(None, max_length=2000, description="Pre-filled letter body text")
-    social_links:           Optional[List[SocialLink]] = Field(None)
-    templated_template_id:  Optional[str]               = Field(None)
+    company_name:           str           = Field(..., min_length=1, max_length=100)
+    company_address:        str           = Field(..., min_length=1, max_length=300)
+    email:                  str           = Field(..., max_length=254)
+    phone:                  str           = Field(..., max_length=30)
+    website:                Optional[str] = Field(None, max_length=200)
+    tagline:                Optional[str] = Field(None, max_length=150)
+    logo_url:               Optional[str] = Field(None)
+    registration_number:    Optional[str] = Field(None, max_length=50)
+    social_handle:          Optional[str] = Field(None, max_length=300, description="e.g. linkedin.com/company/acme")
+    templated_template_id:  Optional[str] = Field(None)
 
 
 class SocialLink(BaseModel):

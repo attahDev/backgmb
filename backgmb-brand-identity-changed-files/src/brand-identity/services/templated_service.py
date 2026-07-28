@@ -7,9 +7,9 @@ logger = logging.getLogger(__name__)
 TEMPLATED_BASE = "https://api.templated.io/v1"
 
 TEMPLATED_TEMPLATE_IDS: dict[str, str] = {
-    "business_card":   "09c4e428-d8b0-438e-9410-ffcadc4e716e",
-    "letterhead":      "35450ba9-9e31-447d-9b37-05df9fb09c7e",
-    "email_signature": "1694e480-5548-4505-9ac6-a8a0ded8b2fa",
+    "business_card":   "3bb2a67a-1fd8-4d9a-95e8-877bcd78be9e",
+    "letterhead":      "f76f7662-5daa-476d-9142-8e4b429ed8aa",
+    "email_signature": "5ce9625e-cd9f-48a9-a0a2-bf18c1ba68b1",
     "invoice":         "",
     "quotation":       "",
 }
@@ -19,6 +19,8 @@ PRIMARY_LAYERS = {
         ("fill",  "p1-primaryBg"),
         ("fill",  "p1-headerBlock"),
         ("fill",  "page-bg"),          # actual layer in template
+        ("color", "p1-name"),
+        ("color", "p1-title"),
     ],
     "letterhead": [
         ("fill",  "headerBg"),
@@ -41,15 +43,6 @@ PRIMARY_LAYERS = {
         ("fill",  "tableHeaderBg"),
         ("fill",  "footerBar"),
         ("color", "companyName"),
-    ],
-}
-
-# Layers that sit on top of a PRIMARY_LAYERS fill and would become invisible if
-# also colored with primary_color — force a fixed, always-readable color instead.
-FIXED_CONTRAST_LAYERS = {
-    "business_card": [
-        ("color", "p1-name",  "#FFFFFF"),
-        ("color", "p1-title", "#FFFFFF"),
     ],
 }
 
@@ -98,7 +91,7 @@ LETTERHEAD_LAYERS: dict[str, tuple[str, str]] = {
     "website":             ("text",      "website"),
     "tagline":             ("text",      "tagline"),
     "registration_number": ("text",      "registrationNumber"),
-    "content_body":        ("text",      "content-area-placeholder"),
+    "social_handle":       ("text",      "socialHandle"),  # VERIFY against template layer panel
     "logo_url":            ("image_url", "logo"),
 }
 
@@ -156,8 +149,8 @@ _LAYER_MAPS: dict[str, dict[str, tuple[str, str]]] = {
     "quotation":       QUOTATION_LAYERS,
 }
 
-# socialLinks layer confirmed present on business_card, email_signature, and letterhead
-_ASSETS_WITH_SOCIAL = {"business_card", "email_signature", "letterhead"}
+# Only these templates actually have a socialLinks layer — don't touch it on others
+_ASSETS_WITH_SOCIAL = {"business_card", "email_signature"}
 
 
 def _build_layers(asset_type: str, inputs: dict) -> dict:
@@ -189,9 +182,6 @@ def _build_layers(asset_type: str, inputs: dict) -> dict:
     if secondary:
         for prop, layer_name in SECONDARY_LAYERS.get(asset_type, []):
             layers.setdefault(layer_name, {})[prop] = secondary
-
-    for prop, layer_name, fixed_color in FIXED_CONTRAST_LAYERS.get(asset_type, []):
-        layers.setdefault(layer_name, {})[prop] = fixed_color
 
     # socialLinks only exists on business_card and email_signature templates
     if asset_type in _ASSETS_WITH_SOCIAL:
