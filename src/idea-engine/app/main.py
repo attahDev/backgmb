@@ -24,7 +24,7 @@ if not _origins:
     _origins = (
         ["http://localhost:3000", "http://localhost:5173"]
         if settings.ENVIRONMENT == "development"
-        else ["https://frogmbte.vercel.app"]
+        else ["https://frogmbte.vercel.app", "https://www.gmblacktechexpo.co.uk"]
     )
 
 app.add_middleware(
