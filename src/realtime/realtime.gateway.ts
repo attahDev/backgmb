@@ -23,9 +23,7 @@ import { PrismaService } from '../prisma/prisma.service';
 @WebSocketGateway({
   cors: {
     origin: [
-      'http://localhost:5173',
-      'https://frogmbte.vercel.app',
-      'https://hofgmbte.vercel.app',
+      'https://www.gmblacktechexpo.co.uk',
     ],
     credentials: true,
   },
