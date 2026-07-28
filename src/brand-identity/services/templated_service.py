@@ -19,8 +19,6 @@ PRIMARY_LAYERS = {
         ("fill",  "p1-primaryBg"),
         ("fill",  "p1-headerBlock"),
         ("fill",  "page-bg"),          # actual layer in template
-        ("color", "p1-name"),
-        ("color", "p1-title"),
     ],
     "letterhead": [
         ("fill",  "headerBg"),
@@ -43,6 +41,15 @@ PRIMARY_LAYERS = {
         ("fill",  "tableHeaderBg"),
         ("fill",  "footerBar"),
         ("color", "companyName"),
+    ],
+}
+
+# Layers that sit on top of a PRIMARY_LAYERS fill and would become invisible if
+# also colored with primary_color — force a fixed, always-readable color instead.
+FIXED_CONTRAST_LAYERS = {
+    "business_card": [
+        ("color", "p1-name",  "#FFFFFF"),
+        ("color", "p1-title", "#FFFFFF"),
     ],
 }
 
@@ -182,6 +189,9 @@ def _build_layers(asset_type: str, inputs: dict) -> dict:
     if secondary:
         for prop, layer_name in SECONDARY_LAYERS.get(asset_type, []):
             layers.setdefault(layer_name, {})[prop] = secondary
+
+    for prop, layer_name, fixed_color in FIXED_CONTRAST_LAYERS.get(asset_type, []):
+        layers.setdefault(layer_name, {})[prop] = fixed_color
 
     # socialLinks only exists on business_card and email_signature templates
     if asset_type in _ASSETS_WITH_SOCIAL:

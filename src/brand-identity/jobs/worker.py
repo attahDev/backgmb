@@ -138,7 +138,11 @@ async def _templated_pipeline(
     output_format: str = "png",
 ) -> dict:
     schema_class(**inputs)
-    pages = await templated_service.render(asset_type, inputs, output_format)
+    # templated_service.render() returns a single bytes blob for the front page.
+    # Wrapped in a list here so the (currently aspirational) multi-page/back-side
+    # handling below has something to index into without crashing. Once a real
+    # back-page render is added, append its bytes to this list instead.
+    pages = [await templated_service.render(asset_type, inputs, output_format)]
 
     if output_format == "pdf":
         url = await upload_service.upload_generated_file(
