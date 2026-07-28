@@ -172,31 +172,51 @@ async function seedCatalogue() {
  * Postgres. Passwords are printed once at the end — change them after first
  * login. Re-running is safe: existing accounts are left alone.
  */
+/**
+ * Creates 15 pre-verified team accounts + a special Dr. Emilee account.
+ * Accounts bypass email verification and are safe to re-run.
+ */
 async function seedTeamAccounts() {
-  console.log('🌱 Seeding 10 team accounts (bypassing email verification)...');
+  console.log('🌱 Seeding 15 team accounts + Dr. Emilee (bypassing email verification)...');
 
-  const accounts = Array.from({ length: 10 }, (_, i) => {
-    const n = i + 1;
-    return {
-      email: `team${n}@gmbt.dev`,
-      password: `Team${n}@Launch2026!`,
-      firstname: 'Team',
-      lastname: `Member ${n}`,
+  const accounts = [
+    ...Array.from({ length: 25 }, (_, i) => {
+      const n = i + 1;
+
+      return {
+        email: `team${n}@gmbt.dev`,
+        password: `Team${n}@Launch2026!`,
+        firstname: 'Team',
+        lastname: `Member ${n}`,
+        organization: 'GMBT',
+        role: UserRole.STUDENT,
+      };
+    }),
+
+    {
+      email: 'dr.emilee@gmbt.dev',
+      password: 'DrEmilee@Launch2026!',
+      firstname: 'Dr.',
+      lastname: 'Emilee',
       organization: 'GMBT',
-      role: UserRole.STUDENT,
-    };
-  });
+      role: UserRole.ADMIN,
+    },
+  ];
 
   const created: typeof accounts = [];
 
   for (const acc of accounts) {
-    const existing = await prisma.user.findUnique({ where: { email: acc.email } });
+    const existing = await prisma.user.findUnique({
+      where: { email: acc.email },
+    });
+
     if (existing) {
       console.log(`ℹ️  ${acc.email} already exists — skipping.`);
       continue;
     }
 
     const hashedPassword = await bcrypt.hash(acc.password, 12);
+
     await prisma.user.create({
       data: {
         email: acc.email,
@@ -205,26 +225,28 @@ async function seedTeamAccounts() {
         lastname: acc.lastname,
         organization: acc.organization,
         role: acc.role,
-        isVerified: true, // skip OTP — straight to usable
+        isVerified: true,
         agreedToTerms: true,
       },
     });
+
     created.push(acc);
   }
 
   if (created.length) {
     console.log('✅ Team accounts created:');
     console.log('');
+
     for (const acc of created) {
       console.log(`  ${acc.email}  /  ${acc.password}`);
     }
+
     console.log('');
-    console.log('  ⚠️  Ask each teammate to change their password after first login.');
+    console.log('  ⚠️  Ask each user to change their password after first login.');
   } else {
-    console.log('ℹ️  All 10 team accounts already existed — nothing created.');
+    console.log('ℹ️  All team accounts already existed — nothing created.');
   }
 }
-
 /**
  * Creates 20 pre-verified STUDENT test accounts for QA/student testing.
  * Same approach as seedTeamAccounts: isVerified: true bypasses the OTP step
