@@ -1,19 +1,103 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { UploadsService } from '../../uploads/uploads.service';
+import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
+import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
+import { CreateCommunityEventDto } from './dto/create-community-event.dto';
+
+/** Attendance.status values. Free-form string column in the DB (no enum),
+ *  so keep the allowed values centralised here. */
+export const ATTENDANCE_STATUS = {
+  SAVED: 'SAVED',
+  REGISTERED: 'REGISTERED',
+} as const;
 
 @Injectable()
 export class EventsService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private notificationsService: NotificationsService,
+    private uploadsService: UploadsService,
+    private badgesService: BadgesService,
   ) {}
 
-  async findUpcoming() {
+  async findUpcoming(includeInactive = false, search?: string) {
     return this.prisma.event.findMany({
-      where: { isActive: true, startsAt: { gte: new Date() } },
-      orderBy: { startsAt: 'asc' },
+      where: {
+        // Community submissions stay off every public listing until an
+        // admin approves them — includeInactive is for admin tooling and
+        // still shouldn't surface someone else's pending/rejected event.
+        reviewStatus: PostStatus.APPROVED,
+        ...(includeInactive
+          ? {}
+          : { isActive: true, isCompleted: false, startsAt: { gte: new Date() } }),
+        ...(search
+          ? {
+              OR: [
+                { title: { contains: search, mode: 'insensitive' } },
+                { description: { contains: search, mode: 'insensitive' } },
+                { location: { contains: search, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      // Featured first regardless of date, then soonest-first within each
+      // group — an admin-pinned event should lead the dashboard even if a
+      // closer, unfeatured event exists.
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'asc' }],
     });
+  }
+
+  /** Powers "View All Events" — the full archive, upcoming AND completed,
+   *  minus anything the admin has soft-deleted. Unlike findUpcoming this
+   *  never date-filters, since a completed/past event should still show
+   *  up here even though it's dropped off the upcoming list. */
+  /** "View All Events" — the public page's expand action. Deliberately
+   *  excludes completed events: those move to the separate Past Events /
+   *  Highlights section (findPastEvents), not this archive. */
+  async findAll() {
+    return this.prisma.event.findMany({
+      where: { isActive: true, isCompleted: false, reviewStatus: PostStatus.APPROVED },
+      orderBy: [{ isFeatured: 'desc' }, { startsAt: 'desc' }],
+    });
+  }
+
+  /** "Our Past Events" / "Highlights from Previous Editions" on the public
+   *  Events page. Most recent first, so the newest recap leads. */
+  async findPastEvents() {
+    return this.prisma.event.findMany({
+      where: { isActive: true, isCompleted: true, reviewStatus: PostStatus.APPROVED },
+      orderBy: { startsAt: 'desc' },
+    });
+  }
+
+  /** Powers the Events dashboard tabs (Upcoming / Attended / Saved) and the
+   *  stats row — replaces the hardcoded arrays that used to live in
+   *  EventUI.tsx / EventStats.tsx. "Attended" isn't a stored status: it's a
+   *  REGISTERED attendance whose event has already ended, computed here so
+   *  nothing has to flip a flag after the fact. */
+  async findMine(userId: string) {
+    const attendance = await this.prisma.eventAttendance.findMany({
+      where: { userId },
+      include: { event: true },
+      orderBy: { event: { startsAt: 'asc' } },
+    });
+
+    const now = new Date();
+    const upcoming = attendance.filter(
+      (a) => a.status === ATTENDANCE_STATUS.REGISTERED && a.event.startsAt >= now,
+    );
+    const attended = attendance.filter(
+      (a) => a.status === ATTENDANCE_STATUS.REGISTERED && a.event.startsAt < now,
+    );
+    const saved = attendance.filter((a) => a.status === ATTENDANCE_STATUS.SAVED);
+
+    return { upcoming, attended, saved };
   }
 
   async rsvp(userId: string, eventId: string) {
@@ -23,10 +107,25 @@ export class EventsService {
     const existing = await this.prisma.eventAttendance.findUnique({
       where: { userId_eventId: { userId, eventId } },
     });
-    if (existing) throw new ConflictException('Already registered for this event');
+
+    if (existing) {
+      if (existing.status === ATTENDANCE_STATUS.REGISTERED) {
+        throw new ConflictException('Already registered for this event');
+      }
+      // Was SAVED — upgrade to REGISTERED instead of a duplicate row
+      // (unique constraint is on [userId, eventId], one row per pair).
+      const attendance = await this.prisma.eventAttendance.update({
+        where: { userId_eventId: { userId, eventId } },
+        data: { status: ATTENDANCE_STATUS.REGISTERED },
+        include: { event: true },
+      });
+      await this.activityService.log(userId, 'EVENT_RSVP', `Registered for ${event.title}`, { eventId });
+      await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
+      return attendance;
+    }
 
     const attendance = await this.prisma.eventAttendance.create({
-      data: { userId, eventId },
+      data: { userId, eventId, status: ATTENDANCE_STATUS.REGISTERED },
       include: { event: true },
     });
 
@@ -36,8 +135,212 @@ export class EventsService {
       `Registered for ${event.title}`,
       { eventId },
     );
+    await this.badgesService.evaluate(userId, 'EVENTS_ATTENDED');
 
     return attendance;
+  }
+
+  /** Bookmark an event without registering attendance. Does not downgrade
+   *  an existing REGISTERED row — saving something you're already going to
+   *  shouldn't un-register you. */
+  async save(userId: string, eventId: string) {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const existing = await this.prisma.eventAttendance.findUnique({
+      where: { userId_eventId: { userId, eventId } },
+    });
+    if (existing) return existing;
+
+    const attendance = await this.prisma.eventAttendance.create({
+      data: { userId, eventId, status: ATTENDANCE_STATUS.SAVED },
+      include: { event: true },
+    });
+
+    await this.notificationsService.notifyUser(userId, {
+      category: NotificationCategory.EVENTS,
+      title: `Saved: ${event.title}`,
+      body: `Event saved to My Events.`,
+      actionLabel: 'View Event',
+      actionUrl: `/dashboard/events/${eventId}`,
+      metadata: { eventId },
+    });
+
+    return attendance;
+  }
+
+  async unsave(userId: string, eventId: string) {
+    const existing = await this.prisma.eventAttendance.findUnique({
+      where: { userId_eventId: { userId, eventId } },
+    });
+    if (!existing) return { removed: false };
+    if (existing.status !== ATTENDANCE_STATUS.SAVED) {
+      throw new ForbiddenException('Cannot unsave an event you are registered for — cancel the RSVP instead');
+    }
+    await this.prisma.eventAttendance.delete({ where: { userId_eventId: { userId, eventId } } });
+    return { removed: true };
+  }
+
+  async findOne(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+    return event;
+  }
+
+  // ───────────────────────── Admin: event management ─────────────────────────
+
+  async createEvent(dto: CreateEventDto) {
+    return this.prisma.event.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        location: dto.location,
+        imageUrl: dto.imageUrl,
+        mode: dto.mode,
+        link: dto.link,
+        tags: dto.tags ?? [],
+        startsAt: new Date(dto.startsAt),
+        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        isActive: dto.isActive ?? true,
+        isFeatured: dto.isFeatured ?? false,
+        source: EventSource.ADMIN,
+        reviewStatus: PostStatus.APPROVED,
+      },
+    });
+  }
+
+  // ───────────────────────── Member: community event submissions ─────────────────────────
+
+  /** "Host an Event" — a member proposes their own event. Always lands
+   *  PENDING; never publicly visible until an admin approves it via
+   *  approveCommunityEvent(). Mirrors CommunityService's spotlight-post
+   *  moderation flow, including the optional photo upload. */
+  async submitCommunityEvent(userId: string, dto: CreateCommunityEventDto, file?: Express.Multer.File) {
+    let imageUrl: string | undefined;
+    if (file) {
+      const uploaded = await this.uploadsService.uploadEventImage(file);
+      imageUrl = uploaded.url;
+    }
+
+    const event = await this.prisma.event.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        location: dto.location,
+        imageUrl,
+        mode: dto.mode,
+        link: dto.link,
+        tags: dto.tags ?? [],
+        startsAt: new Date(dto.startsAt),
+        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        source: EventSource.USER,
+        reviewStatus: PostStatus.PENDING,
+        createdById: userId,
+      },
+    });
+
+    await this.activityService.log(
+      userId,
+      'EVENT_SUBMITTED',
+      `Submitted "${event.title}" for review`,
+      { eventId: event.id },
+    );
+
+    return event;
+  }
+
+  /** The current user's own submissions, whatever their review state —
+   *  powers a "My Submissions" view so a member can see PENDING/REJECTED
+   *  events without them being publicly visible. */
+  async findMySubmissions(userId: string) {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, createdById: userId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // ───────────────────────── Admin: community event moderation ─────────────────────────
+
+  async findPendingSubmissions() {
+    return this.prisma.event.findMany({
+      where: { source: EventSource.USER, reviewStatus: PostStatus.PENDING },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async approveCommunityEvent(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.APPROVED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event is live: "${updated.title}"`,
+        body: 'It now shows up in Events for everyone.',
+        actionLabel: 'View Event',
+        actionUrl: `/dashboard/events/${updated.id}`,
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
+  }
+
+  async rejectCommunityEvent(id: string, reason?: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const updated = await this.prisma.event.update({
+      where: { id },
+      data: { reviewStatus: PostStatus.REJECTED },
+    });
+
+    if (updated.createdById) {
+      await this.notificationsService.notifyUser(updated.createdById, {
+        category: NotificationCategory.EVENTS,
+        title: `Your event wasn't approved: "${updated.title}"`,
+        body: reason || "It didn't meet the event guidelines.",
+        metadata: { eventId: updated.id },
+      });
+    }
+
+    return updated;
+  }
+
+  async updateEvent(id: string, dto: UpdateEventDto) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.location !== undefined && { location: dto.location }),
+        ...(dto.imageUrl !== undefined && { imageUrl: dto.imageUrl }),
+        ...(dto.mode !== undefined && { mode: dto.mode }),
+        ...(dto.link !== undefined && { link: dto.link }),
+        ...(dto.startsAt !== undefined && { startsAt: new Date(dto.startsAt) }),
+        ...(dto.endsAt !== undefined && { endsAt: new Date(dto.endsAt) }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.isFeatured !== undefined && { isFeatured: dto.isFeatured }),
+        ...(dto.isCompleted !== undefined && { isCompleted: dto.isCompleted }),
+        ...(dto.tags !== undefined && { tags: dto.tags }),
+      },
+    });
+  }
+
+  async removeEvent(id: string) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+    // Soft-delete: keep the row (and everyone's attendance history) intact,
+    // just stop it from showing up in findUpcoming().
+    return this.prisma.event.update({ where: { id }, data: { isActive: false } });
   }
 
   /** Powers the "N This Month" events hero card (was a fixed "8 This Month"). */
@@ -46,6 +349,40 @@ export class EventsService {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     return this.prisma.eventAttendance.count({
       where: { userId, createdAt: { gte: startOfMonth } },
+    });
+  }
+
+  // ───────────────────────── Admin: past-event recaps ─────────────────────────
+
+  /** Admin fills in "what happened" after an event wraps — feeds the public
+   *  "Highlights from Previous Editions" section. `keepGallery` is the
+   *  subset of existing image URLs the admin left checked in the editor
+   *  (removed ones just get dropped); any newly uploaded files are appended
+   *  after those. Setting a recap also flips isCompleted — an admin writing
+   *  up "what happened" implies the event is done, even if they hadn't
+   *  toggled that separately yet. */
+  async updateRecap(
+    id: string,
+    dto: { summary?: string; speakers?: string[]; achievements?: string[]; keepGallery?: string[] },
+    files: Express.Multer.File[],
+  ) {
+    const event = await this.prisma.event.findUnique({ where: { id } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const uploaded = await Promise.all(files.map((f) => this.uploadsService.uploadEventImage(f)));
+    const gallery = [...(dto.keepGallery ?? []), ...uploaded.map((u) => u.url)];
+
+    return this.prisma.event.update({
+      where: { id },
+      data: {
+        isCompleted: true,
+        recap: {
+          summary: dto.summary ?? '',
+          speakers: dto.speakers ?? [],
+          achievements: dto.achievements ?? [],
+          gallery,
+        },
+      },
     });
   }
 }

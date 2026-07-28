@@ -16,6 +16,12 @@ import { BusinessPlannerModule } from './business-planner/business-planner.modul
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { BrandIdentityModule } from './brand-identity/brand-identity.module';
 import { EngagementModule } from './engagement/engagement.module';
+import { UploadsModule } from './uploads/uploads.module';
+import { HofAiModule } from './hof-ai/hof-ai.module';
+import { FellowshipAiModule } from './fellowship-ai/fellowship-ai.module';
+import { GreenAiModule } from './green-ai/green-ai.module';
+import { SearchModule } from './search/search.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 
 @Module({
@@ -43,6 +49,12 @@ import { EngagementModule } from './engagement/engagement.module';
     ChatbotModule,
     BrandIdentityModule,
     EngagementModule,
+    UploadsModule,
+    HofAiModule,
+    FellowshipAiModule,
+    GreenAiModule,
+    SearchModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

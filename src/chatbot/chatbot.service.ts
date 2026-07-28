@@ -7,6 +7,8 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { ChatSender, ChatVisitorType } from '@prisma/client';
+import { sanitizeAiText } from 'src/common/sanitize-ai-text';
+import { isIdentityQuestion, noraIdentityAnswer, rewriteBotIdentity } from 'src/common/rewrite-bot-identity';
 
 @Injectable()
 export class ChatbotService {
@@ -53,6 +55,29 @@ export class ChatbotService {
                 },
             });
 
+            // Identity questions ("who are you", "what's your name") never
+            // hit the external Space — it has its own baked-in "Black Tech
+            // Expo assistant" identity we can't prompt around. Answer as
+            // Nora directly instead.
+            if (isIdentityQuestion(payload.message)) {
+                const answer = noraIdentityAnswer();
+
+                await this.prisma.chatMessage.create({
+                    data: {
+                        sessionId,
+                        sender: ChatSender.BOT,
+                        content: answer,
+                        aiStatus: 'success',
+                    },
+                });
+
+                return {
+                    success: true,
+                    message: 'Chat response generated successfully',
+                    data: { sessionId, answer },
+                };
+            }
+
             const response = await firstValueFrom(
                 this.httpService.post(
                     this.BASE_URL,
@@ -74,7 +99,7 @@ export class ChatbotService {
                 );
             }
 
-            const answer = response.data?.answer || 'No response received.';
+            const answer = rewriteBotIdentity(sanitizeAiText(response.data?.answer || 'No response received.'));
 
             await this.prisma.chatMessage.create({
                 data: {

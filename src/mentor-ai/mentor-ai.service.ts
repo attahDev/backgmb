@@ -5,6 +5,9 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError, AxiosResponse } from 'axios';
+import { sanitizeAiText } from 'src/common/sanitize-ai-text';
+import { searchWeb, formatWebResultsForPrompt } from 'src/common/tavily-search';
+import { ActivityService } from 'src/engagement/activity/activity.service';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 type ChatRole = 'user' | 'assistant';
@@ -23,6 +26,10 @@ interface AiRequestBody {
   history: AiHistoryItem[];
 }
 
+const GROQ_MODEL = process.env.GROQ_EXTRACTION_MODEL || 'openai/gpt-oss-120b';
+
+const MENTOR_SYSTEM_PROMPT = `You are the GMBTE Business Mentor AI — a warm, practical, encouraging mentor for Black entrepreneurs and tech talent in the UK using the Greater Manchester Black Tech Expo (GMBTE) platform. Give concrete, actionable business advice (pricing, strategy, validation, funding, operations, growth) grounded in the UK context — use GBP (£) for any figures, and where relevant point to UK-specific routes like Companies House registration, UK business bank accounts, GOV.UK Start Up Loans, regional funds (e.g. Greater Manchester Combined Authority, Innovate UK, the British Business Bank), and the Manchester/North West startup ecosystem rather than defaulting to examples from elsewhere. Keep answers conversational and focused — a few short paragraphs, not an essay, unless the user asks for depth. Write in plain conversational text only — no markdown formatting (no #, **, tables, or --- dividers); use plain sentences and, if you need a list, simple dashes on their own lines. Don't mention that you're a fallback or backup system.`;
+
 // ─── Service ───────────────────────────────────────────────────────────
 @Injectable()
 export class MentorAiService {
@@ -38,6 +45,7 @@ export class MentorAiService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly httpService: HttpService,
+    private readonly activityService: ActivityService,
   ) {}
 
   /**
@@ -54,7 +62,17 @@ export class MentorAiService {
     }
 
     // 1. Resolve or create the conversation
+    const isNewChat = !chatId;
     const chat = await this.resolveChat(userId, message, chatId);
+
+    if (isNewChat) {
+      await this.activityService.log(
+        userId,
+        'MENTOR_AI_CHAT',
+        'Started a conversation with the Business Mentor AI',
+        { chatId: chat.id },
+      );
+    }
 
     // 2. Save the user message
     await this.prisma.mentorMessage.create({
@@ -69,7 +87,7 @@ export class MentorAiService {
     const history = await this.buildHistory(chat.id);
 
     // 4. Call the AI API
-    const aiReply = await this.fetchAiReply(message, history);
+    const aiReply = sanitizeAiText(await this.fetchAiReply(message, history));
 
     // 5. Persist the assistant message
     const assistantMessage = await this.prisma.mentorMessage.create({
@@ -139,43 +157,113 @@ export class MentorAiService {
     message: string,
     history: AiHistoryItem[],
   ): Promise<string> {
+    try {
+      return await this.fetchFromHfSpace(message, history);
+    } catch (error) {
+      this.logger.warn(
+        `Hugging Face mentor Space failed (${error instanceof Error ? error.message : 'unknown error'}), falling back to Groq`,
+      );
+
+      const groqReply = await this.fetchFromGroq(message, history);
+      if (groqReply) return groqReply;
+
+      // Both providers failed — surface a real error.
+      if (error instanceof AxiosError) {
+        throw new BadRequestException(
+          error.response
+            ? `Mentor AI service returned ${error.response.status}`
+            : 'Mentor AI is temporarily unavailable — please try again in a moment',
+        );
+      }
+      throw new BadRequestException(
+        'Mentor AI is temporarily unavailable — please try again in a moment',
+      );
+    }
+  }
+
+  /** Primary provider: the dedicated fine-tuned mentor Space. One retry covers a cold start. */
+  private async fetchFromHfSpace(
+    message: string,
+    history: AiHistoryItem[],
+  ): Promise<string> {
     const body: AiRequestBody = { message, history };
 
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response: AxiosResponse<AiApiResponse> = await firstValueFrom(
+          this.httpService.post<AiApiResponse>(this.AI_API_URL, body, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: attempt === 1 ? 15_000 : 20_000,
+          }),
+        );
+
+        const reply = response.data?.response;
+        if (typeof reply !== 'string' || reply.trim().length === 0) {
+          throw new BadRequestException('AI returned an empty or invalid response');
+        }
+        return reply;
+      } catch (error) {
+        const isRetryable =
+          error instanceof AxiosError && (error.code === 'ECONNABORTED' || !error.response);
+
+        if (isRetryable && attempt === 1) {
+          this.logger.warn(`HF Space attempt 1 failed (${error.message}), retrying once`);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error('Mentor Space unreachable');
+  }
+
+  /** Fallback provider: Groq, given the same conversation, in case the HF Space is down. */
+  private async fetchFromGroq(
+    message: string,
+    history: AiHistoryItem[],
+  ): Promise<string | null> {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('GROQ_API_KEY not set — no fallback available for Mentor AI');
+      return null;
+    }
+
+    // Best-effort: ground the answer in current info Groq's training data
+    // can't know (grant deadlines, current schemes, recent news) — never
+    // blocks the reply if Tavily is unavailable or unhelpful.
+    const webResults = await searchWeb(`${message} UK`, { maxResults: 4 });
+    const webContext = formatWebResultsForPrompt(webResults);
+
+    const systemContent = webContext
+      ? `${MENTOR_SYSTEM_PROMPT}\n\nCurrent web search results you can draw on if relevant to the question (cite naturally, e.g. "as of a recent search..." — don't force it in if not relevant):\n\n${webContext}`
+      : MENTOR_SYSTEM_PROMPT;
+
     try {
-      const response: AxiosResponse<AiApiResponse> = await firstValueFrom(
-        this.httpService.post<AiApiResponse>(this.AI_API_URL, body, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 15_000, // 15s timeout – adjust as needed
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: systemContent },
+            ...history.map((h) => ({ role: h.role, content: h.content })),
+            { role: 'user', content: message },
+          ],
+          temperature: 0.7,
         }),
-      );
+      });
 
-      const reply = response.data?.response;
-      if (typeof reply !== 'string' || reply.trim().length === 0) {
-        throw new BadRequestException(
-          'AI returned an empty or invalid response',
-        );
+      if (!response.ok) {
+        this.logger.error(`Groq fallback failed with status ${response.status}`);
+        return null;
       }
-      return reply;
+
+      const payload = await response.json();
+      const reply = payload?.choices?.[0]?.message?.content;
+      return typeof reply === 'string' && reply.trim().length > 0 ? reply : null;
     } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error; // re‑throw our own validation error
-      }
-
-      if (error instanceof AxiosError) {
-        this.logger.error(
-          `AI API request failed: ${error.message}`,
-          error.stack,
-        );
-        throw new BadRequestException(
-          `Failed to get AI response: ${error.response?.status ?? 'Network error'}`,
-        );
-      }
-
-      // Unexpected error (programming mistake)
-      this.logger.error('Unexpected error during AI call', error);
-      throw new BadRequestException(
-        'An internal error occurred while contacting the AI service',
-      );
+      this.logger.error('Groq fallback call failed', error as Error);
+      return null;
     }
   }
 }

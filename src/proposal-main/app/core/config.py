@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = ""
     RATE_LIMIT_PER_MINUTE: int = 5
     RATE_LIMIT_PER_HOUR: int = 30
+    MAIN_BACKEND_URL: str = "https://backgmb.onrender.com"
+    INTERNAL_ACTIVITY_SECRET: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

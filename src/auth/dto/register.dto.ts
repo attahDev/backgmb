@@ -31,14 +31,17 @@ export class RegisterDto {
   @MinLength(3)
   organization: string;
 
+  // ADMIN deliberately excluded — self-registration must never be able to
+  // grant admin access. Promote a user to ADMIN only through the admin-only
+  // PATCH /users/:id/role endpoint, gated by @Roles(UserRole.ADMIN).
   @ApiProperty({
     example: 'STUDENT',
-    enum: ['STUDENT', 'PROFESSIONAL', 'ENGINEER', 'ADMIN', 'OTHER'],
+    enum: ['STUDENT', 'PROFESSIONAL', 'ENGINEER', 'OTHER'],
   })
-  @IsEnum(['STUDENT', 'PROFESSIONAL', 'ENGINEER', 'ADMIN', 'OTHER'], {
+  @IsEnum(['STUDENT', 'PROFESSIONAL', 'ENGINEER', 'OTHER'], {
     message: 'Valid role required',
   })
-  role: 'STUDENT' | 'PROFESSIONAL' | 'ENGINEER' | 'ADMIN' | 'OTHER';
+  role: 'STUDENT' | 'PROFESSIONAL' | 'ENGINEER' | 'OTHER';
 
   @ApiProperty({ example: 'password123' })
   @IsString()

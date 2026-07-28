@@ -22,6 +22,7 @@ from app.schemas.research import (
     OnChainData, ResearchRequest, ResultData,
 )
 from app.services.aggregator import aggregate
+from app.services.activity_report import report_activity
 from app.services.classifier import classify_query, normalize_query
 from app.services.job_utils import increment_retry_count, update_job_status
 from app.services.rate_limiter import check_rate_limit
@@ -114,7 +115,7 @@ def _shape_response(raw_data: Optional[dict], category: str):
     return metrics, charts, enrichments
 
 
-async def run_research_pipeline(job_id: str, query: str, query_normalized: str) -> None:
+async def run_research_pipeline(job_id: str, query: str, query_normalized: str, user_id: str | None = None) -> None:
     start_time = time.monotonic()
     await update_job_status(job_id, "processing")
 
@@ -177,6 +178,13 @@ async def run_research_pipeline(job_id: str, query: str, query_normalized: str) 
         )
 
         logger.info(f"Pipeline complete: job={job_id} ms={processing_ms}")
+
+        await report_activity(
+            user_id,
+            "MARKET_RESEARCH_GENERATED",
+            f'Generated a market research report for "{query}"',
+            {"jobId": job_id, "category": classification.category},
+        )
 
     except Exception as e:
         logger.exception(f"Pipeline failed: job={job_id}")
@@ -254,6 +262,13 @@ async def create_research_job(
 
         await db.commit()
 
+        await report_activity(
+            user_id,
+            "MARKET_RESEARCH_GENERATED",
+            f'Generated a market research report for "{query}"',
+            {"jobId": str(job.id), "category": cached.get("category", "general")},
+        )
+
         response_data = {"job_id": str(job.id)}
         if idem_key:
             await set_idempotency(idem_key, response_data)
@@ -281,7 +296,7 @@ async def create_research_job(
     job_id = str(job.id)
     await acquire_lock(query_normalized, job_id)
 
-    background_tasks.add_task(run_research_pipeline, job_id, query, query_normalized)
+    background_tasks.add_task(run_research_pipeline, job_id, query, query_normalized, user_id)
 
     response_data = {"job_id": job_id}
     if idem_key:

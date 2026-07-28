@@ -12,8 +12,9 @@ generator client {
 // prisma/schema.prisma
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model User {
@@ -24,7 +25,16 @@ model User {
   lastname         String
   organization     String?
   role             UserRole? // 👈 Uses enum now!
+  // Free-text region, e.g. "Greater Manchester" — shown on the profile page.
+  // No phone field: phone numbers aren't collected here, they come through
+  // the mentee log instead.
+  region             String?
+  profileVisibility  ProfileVisibility @default(PUBLIC)
   isVerified       Boolean   @default(false)
+  // Admin deactivation switch — enforced in JwtStrategy so revoking access
+  // takes effect immediately rather than waiting for the token to expire
+  // (same reasoning as RolesGuard's role check).
+  isActive         Boolean   @default(true)
   agreedToTerms    Boolean   @default(false)
   subscribedToNews Boolean   @default(false)
   createdAt        DateTime  @default(now())
@@ -35,15 +45,30 @@ model User {
   verificationSessions VerificationSession[]
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
+  comments Comment[]
 
-  brandAssets BrandAsset[]
-    chatSessions         ChatSession[]
+  brandAssets          BrandAsset[]
+  chatSessions         ChatSession[]
 
-  mentorConnections MentorConnection[]
-  courseProgress    CourseProgress[]
-  eventAttendance   EventAttendance[]
-  userBadges        UserBadge[]
-  activityLogs      ActivityLog[]
+  mentorConnections     MentorConnection[]
+  mentorProfile         Mentor?
+  menteeMessages        MenteeMessage[]
+  courseProgress        CourseProgress[]
+  eventAttendance       EventAttendance[]
+  createdEvents         Event[]
+  userBadges            UserBadge[]
+  activityLogs          ActivityLog[]
+  tributes              Tribute[]
+  nominations           Nomination[]
+  spotlightStories      SpotlightStory[]
+  moduleProgress        ModuleProgress[]
+  greenActions          GreenAction[]
+  greenProjectSupport   GreenProjectSupport[]
+  spotlightLikes        SpotlightLike[]
+  creditTransactions    CreditTransaction[]
+  notifications         Notification[]
+  skillLogs             SkillLog[]
+  careerGoal            MenteeCareerGoal?
 
   @@map("users")
 }
@@ -52,8 +77,14 @@ enum UserRole {
   STUDENT
   PROFESSIONAL
   ENGINEER
+  MENTOR
   ADMIN
   OTHER
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  PRIVATE
 }
 
 model Otp {
@@ -190,6 +221,11 @@ model BusinessPlan {
   location        String
   experienceLevel String
   goal            String
+
+  // References Idea.id from the idea-engine service's own `ideas` table.
+  // No DB-level FK — idea-engine owns a separate table in the same Postgres
+  // instance, same pattern as the credit-gating tables it already reads/writes.
+  sourceIdeaId String?
 
   aiResponse Json
 
@@ -329,10 +365,23 @@ model Mentor {
   skills    String[]
   isActive  Boolean @default(true)
 
+  // Admin-assigned grouping used to sort/filter the mentor directory
+  // (e.g. "Engineering", "Design", "Product"). Free text on purpose —
+  // no fixed enum — so admins aren't blocked waiting on a code change
+  // to add a new category.
+  category String @default("General")
+
+  // Nullable: older/seed directory rows may still have no linked login.
+  // When set, this Mentor IS a real User (role: MENTOR) who can log in
+  // and see their own "My Mentees" dashboard.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   connections MentorConnection[]
+  spotlights  MentorSpotlight[]
 
   @@index([isActive])
   @@map("mentors")
@@ -356,6 +405,10 @@ model MentorConnection {
   sessionsCompleted Int                    @default(0)
   nextSessionAt     DateTime?
 
+  messages  MenteeMessage[]
+  sessions  MentorSession[]
+  skillLogs SkillLog[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -364,17 +417,55 @@ model MentorConnection {
   @@map("mentor_connections")
 }
 
-model Opportunity {
-  id       String    @id @default(uuid())
-  title    String
-  company  String
-  location String?
-  type     String?
-  url      String?
-  postedAt DateTime  @default(now())
-  isActive Boolean   @default(true)
+/** Direct mentor <-> mentee messaging within a connection (distinct from
+ *  MentorChat/MentorMessage, which back the AI mentor assistant). */
+model MenteeMessage {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  content String
+
+  createdAt DateTime @default(now())
+
+  @@index([connectionId])
+  @@map("mentee_messages")
+}
+
+model Opportunity {
+  id          String   @id @default(uuid())
+
+  title       String
+  description String?
+
+  company     String
+
+  category    String?
+  location    String?
+  type        String?
+
+  source      String   @default("MANUAL")
+
+  provider    String?
+  externalId  String?
+
+  url         String?
+  applyUrl    String?
+
+  isFeatured  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+
+  postedAt    DateTime @default(now())
+
+  @@unique([provider, externalId], name: "provider_externalId")
+
+  @@index([category])
+  @@index([isFeatured])
   @@index([isActive])
+
   @@map("opportunities")
 }
 
@@ -386,6 +477,15 @@ model Course {
   title       String
   description String?
   category    String?
+  // Free-form sub-tags for sorting/filtering WITHIN a category — e.g.
+  // ["Web Development", "Beginner"] on an education course, or
+  // ["Energy", "Certification"] on a climate one. Separate from `category`,
+  // which only ever holds "education" | "climate" and decides which page
+  // (Academy vs Green Impact) the course shows up on at all.
+  tags        String[] @default([])
+  // Admin-curated spotlight — lets you run 300 courses but only surface a
+  // handful on the toolkit landing pages, same mechanism as Event.isFeatured.
+  isFeatured  Boolean  @default(false)
   // Extra display fields that used to live hardcoded in
   // sustainabilityCourses.ts (image, duration, contactHours, mode, level,
   // certificateAvailable, learningOutcomes, shortDescription). Kept as JSON
@@ -427,10 +527,131 @@ model Module {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  progress ModuleProgress[]
+
   @@unique([courseId, slug])
   @@index([courseId])
   @@index([courseId, order])
   @@map("modules")
+}
+
+model ModuleProgress {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  // Section ids the user has checked "done" — validated against
+  // Module.content.sections[].id when toggled, not enforced at the DB
+  // level (Postgres text[] can't foreign-key into JSON).
+  completedSectionIds String[] @default([])
+  isCompleted         Boolean  @default(false)
+  completedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, moduleId])
+  @@index([userId])
+  @@map("module_progress")
+}
+
+model GreenProject {
+  id          String @id @default(uuid())
+  title       String
+  description String
+  imageUrl    String?
+
+  goalAmountMinor   Int
+  raisedAmountMinor Int     @default(0)
+  isActive          Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supporters GreenProjectSupport[]
+
+  @@map("green_projects")
+}
+
+model GreenProjectSupport {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   GreenProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, projectId])
+  @@map("green_project_support")
+}
+
+model CreditListing {
+  id                String   @id @default(uuid())
+  title             String
+  description       String?
+  pointsPerCredit   Float
+  availableQuantity Int      @default(0)
+  isActive          Boolean  @default(true)
+  sortOrder         Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions CreditTransaction[]
+
+  @@map("credit_listings")
+}
+
+model CreditTransaction {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  listingId String
+  listing   CreditListing @relation(fields: [listingId], references: [id])
+
+  type        String // BUY | SELL
+  quantity    Int
+  pointsDelta Float
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([listingId])
+  @@map("credit_transactions")
+}
+
+model ClimateReport {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  link        String?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("climate_reports")
+}
+
+model GreenAction {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type        String
+  description String?
+  co2OffsetKg Float
+  area        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("green_actions")
 }
 
 model CourseProgress {
@@ -456,9 +677,59 @@ model Event {
   title       String
   description String?
   location    String?
+  imageUrl    String?
+  // 'Virtual' | 'In-Person' | 'Hybrid' — free-form like Course.category
+  // rather than an enum, so the admin event form can add new modes without
+  // a migration. Frontend badges default to 'In-Person' when unset.
+  mode        String?
+  // Optional external URL — registration page, Zoom/Meet link, Eventbrite,
+  // etc. Purely optional so events with no online component (walk-in
+  // workshops) don't need one.
+  link        String?
   startsAt    DateTime
   endsAt      DateTime?
   isActive    Boolean   @default(true)
+  // Featured events are pinned first in findUpcoming(), ahead of anything
+  // sorted purely by date — lets an admin put one event front-and-centre
+  // on the dashboard regardless of how soon it is.
+  isFeatured  Boolean   @default(false)
+  // Admin manually ticks an event off as done — distinct from isActive
+  // (soft-delete/hide). A completed event stays visible in the full
+  // events archive ("View All Events") but drops out of the upcoming
+  // list even if its date logic would otherwise still show it.
+  isCompleted Boolean   @default(false)
+  // Free-form chips shown on the public Events page cards (e.g. "AI/ML",
+  // "Networking") — same convention as Course.tags.
+  tags        String[]  @default([])
+
+  // ADMIN = official GMBTE-curated events (created via the admin panel).
+  // USER  = submitted by a member through "Host an Event" on the dashboard.
+  source       EventSource @default(ADMIN)
+  // Reuses the same PENDING/APPROVED/REJECTED moderation flow as
+  // SpotlightStory. Admin-created events skip the queue entirely
+  // (default APPROVED); user submissions start PENDING and only become
+  // publicly visible once an admin approves them — see findUpcoming/findAll.
+  reviewStatus PostStatus  @default(APPROVED)
+
+  // GENERAL = shown on the main GMBTE Events page/dashboard (gmbtefro).
+  // HALL_OF_FAME = shown on the Hall of Fame site's Events page (hofgmbte)
+  // instead — induction ceremonies, regional recognition, legacy events.
+  // A real enum (not a tag) because it gates which frontend's public
+  // listing an event appears in, same reasoning as source/reviewStatus
+  // above — not open-ended like mode/tags.
+  audience EventAudience @default(GENERAL)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Populated by an admin after the event happens — powers the public "Our
+  // Past Events / Highlights from Previous Editions" section. Shape:
+  // { summary?: string, speakers?: string[], achievements?: string[],
+  //   gallery?: string[] }. JSON rather than columns for the same reason
+  // Course.metadata is JSON — flexible display content, not relational
+  // data. Independent of isCompleted: an admin can prep a recap before
+  // flipping isCompleted, or leave isCompleted events with no recap yet.
+  recap Json?
 
   createdAt DateTime @default(now())
 
@@ -466,7 +737,19 @@ model Event {
 
   @@index([isActive])
   @@index([startsAt])
+  @@index([reviewStatus])
+  @@index([audience])
   @@map("events")
+}
+
+enum EventSource {
+  ADMIN
+  USER
+}
+
+enum EventAudience {
+  GENERAL
+  HALL_OF_FAME
 }
 
 model EventAttendance {
@@ -491,6 +774,10 @@ model Badge {
   description String?
   icon        String?
 
+  metric String
+  target Int
+
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
   users UserBadge[]
@@ -512,6 +799,37 @@ model UserBadge {
   @@map("user_badges")
 }
 
+model Tribute {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  message String
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("tributes")
+}
+
+model Nomination {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  nomineeName String
+  category    String?
+  story       String
+
+  status     String    @default("PENDING")
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("nominations")
+}
 model ActivityLog {
   id     String @id @default(uuid())
   userId String
@@ -529,19 +847,234 @@ model ActivityLog {
 }
 
 model SpotlightStory {
-  id          String  @id @default(uuid())
+  id String @id @default(uuid())
+
+  authorId String?
+  author   User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
   title       String
   description String
-  authorName  String
-  authorRole  String
+
+  authorName String
+  authorRole String
+
   avatarColor String? @default("bg-red-600")
   imageUrl    String?
-  likes       Int     @default(0)
-  comments    Int     @default(0)
-  isPublished Boolean @default(true)
+
+  status     PostStatus @default(PENDING)
+  approvedAt DateTime?
+
+  likes    Int @default(0)
+  comments Int @default(0)
+
+  isPublished Boolean @default(false)
 
   createdAt DateTime @default(now())
 
+  likedBy     SpotlightLike[]
+  commentList Comment[]
+
+  @@index([status])
   @@index([isPublished])
+  @@index([status, approvedAt])
   @@map("spotlight_stories")
+}
+
+
+model Comment {
+  id String @id @default(uuid())
+
+  storyId String
+  story SpotlightStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  content String
+
+  createdAt DateTime @default(now())
+
+  @@index([storyId])
+  @@map("comments")
+}
+
+model SpotlightLike {
+  id      String         @id @default(uuid())
+  userId  String
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyId String
+  story   SpotlightStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, storyId])
+  @@index([storyId])
+  @@map("spotlight_likes")
+}
+
+model Notification {
+  id String @id @default(uuid())
+
+  audience NotificationAudience
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category NotificationCategory
+  title    String
+  body     String?
+
+  actionLabel String?
+  actionUrl   String?
+  metadata    Json?
+
+  isRead Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([audience, userId])
+  @@index([audience, isRead])
+  @@map("notifications")
+}
+
+enum NotificationAudience {
+  USER
+  ADMIN
+}
+
+enum NotificationCategory {
+  COMMUNITY
+  EVENTS
+  MENTORS
+  OPPORTUNITIES
+  COURSES
+  GREEN_IMPACT
+  SYSTEM
+}
+
+enum PostStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ---------------------------------------------------------------------------
+// Sessions, mentor spotlight, skill logging, and career paths — back
+// mentors.service.ts and career-paths.service.ts.
+// ---------------------------------------------------------------------------
+
+enum SessionStatus {
+  PENDING
+  SCHEDULED
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+model MentorSession {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  proposedFor  DateTime
+  scheduledFor DateTime?
+  durationMins Int?
+  agenda       String?
+  status       SessionStatus @default(PENDING)
+  mentorNotes  String?
+  menteeNotes  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skillLogs SkillLog[]
+
+  @@index([connectionId])
+  @@index([status])
+  @@map("mentor_sessions")
+}
+
+model MentorSpotlight {
+  id       String @id @default(uuid())
+  mentorId String
+  mentor   Mentor @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+
+  shoutout  String
+  isActive  Boolean  @default(true)
+  startDate DateTime @default(now())
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([startDate])
+  @@map("mentor_spotlights")
+}
+
+/** Mentee-reported skill, optionally tied to a specific session moment,
+ *  optionally confirmed by the mentor on that connection. */
+model SkillLog {
+  id           String           @id @default(uuid())
+  connectionId String
+  connection   MentorConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      MentorSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  menteeId     String
+  mentee       User             @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+
+  skillName         String
+  notes             String?
+  confirmedByMentor Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([connectionId])
+  @@index([menteeId])
+  @@index([sessionId])
+  @@map("skill_logs")
+}
+
+model CareerPath {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requiredSkills CareerPathSkill[]
+  menteeGoals    MenteeCareerGoal[]
+
+  @@map("career_paths")
+}
+
+model CareerPathSkill {
+  id           String     @id @default(uuid())
+  careerPathId String
+  careerPath   CareerPath @relation(fields: [careerPathId], references: [id], onDelete: Cascade)
+
+  skillName String
+  weight    Int    @default(1)
+
+  @@index([careerPathId])
+  @@map("career_path_skills")
+}
+
+/** One active goal per mentee. aiSummary/aiSummaryAt/aiSummarySkillsCount cache
+ *  the last AI gap-analysis so it only regenerates when logged-skill count changes. */
+model MenteeCareerGoal {
+  id           String     @id @default(uuid())
+  menteeId     String     @unique
+  mentee       User       @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  careerPathId String
+  careerPath   CareerPath @relation(fields: [careerPathId], references: [id])
+
+  aiSummary            String?
+  aiSummaryAt          DateTime?
+  aiSummarySkillsCount Int?
+  setAt                DateTime  @default(now())
+
+  @@map("mentee_career_goals")
 }

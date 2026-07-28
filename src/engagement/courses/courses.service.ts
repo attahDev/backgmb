@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
+import { BadgesService } from '../badges/badges.service';
 import { CreateCourseDto, CreateModuleDto, UpdateCourseDto, UpdateModuleDto } from './dto/module.dto';
 import { slugify } from './slugify';
 
@@ -10,16 +11,19 @@ export class CoursesService {
   constructor(
     private prisma: PrismaService,
     private activityService: ActivityService,
+    private badgesService: BadgesService,
   ) {}
 
   /** Course catalogue joined with the current user's own progress, if any.
    *  Optionally filtered by category ('education' | 'climate') so the
-   *  Academy and Green Impact pages only ever see their own courses. */
-  async findAllWithProgress(userId: string, category?: string) {
+   *  Academy and Green Impact pages only ever see their own courses.
+   *  includeInactive lets the admin course table show removed (isActive:
+   *  false) courses too, so "remove" is reversible instead of a black hole. */
+  async findAllWithProgress(userId: string, category?: string, includeInactive = false) {
     const [courses, progress] = await Promise.all([
       this.prisma.course.findMany({
-        where: { isActive: true, ...(category ? { category } : {}) },
-        orderBy: { createdAt: 'desc' },
+        where: { ...(includeInactive ? {} : { isActive: true }), ...(category ? { category } : {}) },
+        orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
       }),
       this.prisma.courseProgress.findMany({ where: { userId } }),
     ]);
@@ -64,6 +68,23 @@ export class CoursesService {
     });
   }
 
+  /** Batched version of findModules for dashboard loads that need modules
+   *  for several courses at once (e.g. the course list page) — one round
+   *  trip instead of one request per course. Silently skips ids that don't
+   *  exist rather than 404ing the whole batch over one bad id. */
+  async findModulesForCourses(courseIds: string[]) {
+    const modules = await this.prisma.module.findMany({
+      where: { courseId: { in: courseIds } },
+      orderBy: { order: 'asc' },
+    });
+
+    const byCourse = new Map<string, typeof modules>();
+    for (const id of courseIds) byCourse.set(id, []);
+    for (const m of modules) byCourse.get(m.courseId)?.push(m);
+
+    return Object.fromEntries(byCourse);
+  }
+
   async findModulesBySlug(courseSlug: string) {
     const course = await this.findBySlug(courseSlug);
     const modules = await this.prisma.module.findMany({
@@ -73,38 +94,134 @@ export class CoursesService {
     return { course, modules };
   }
 
-  async findModuleBySlug(courseSlug: string, lessonSlug: string) {
+  async findModuleBySlug(courseSlug: string, lessonSlug: string, userId?: string) {
     const course = await this.findBySlug(courseSlug);
     const module = await this.prisma.module.findUnique({
       where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
     });
     if (!module) throw new NotFoundException('Module not found');
-    return { course, module };
+
+    const progress = userId
+      ? await this.prisma.moduleProgress.findUnique({
+          where: { userId_moduleId: { userId, moduleId: module.id } },
+        })
+      : null;
+
+    return {
+      course,
+      module: {
+        ...module,
+        completedSectionIds: progress?.completedSectionIds ?? [],
+        isCompleted: progress?.isCompleted ?? false,
+      },
+    };
   }
 
-  async updateProgress(userId: string, courseId: string, completedModules: number) {
-    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
-    if (!course) throw new NotFoundException('Course not found');
-
-    const clamped = Math.max(0, Math.min(completedModules, course.totalModules));
-    const isCompleted = course.totalModules > 0 && clamped >= course.totalModules;
-
-    const progress = await this.prisma.courseProgress.upsert({
-      where: { userId_courseId: { userId, courseId } },
-      update: { completedModules: clamped, isCompleted },
-      create: { userId, courseId, completedModules: clamped, isCompleted },
+  /** The real progress mechanic — a student checks a section as done, this
+   *  toggles it, recomputes whether the whole module is done (every
+   *  section id present), and recomputes CourseProgress from a fresh count
+   *  rather than incrementing/decrementing a counter (which drifts if a
+   *  section gets unchecked, a module gets deleted, etc — a recount can't
+   *  drift). Replaces the old PATCH /courses/:id/progress, which just
+   *  trusted whatever completedModules number the client sent — turns out
+   *  nothing in the frontend was even calling it. */
+  async toggleSection(userId: string, courseSlug: string, lessonSlug: string, sectionId: string) {
+    const course = await this.findBySlug(courseSlug);
+    const module = await this.prisma.module.findUnique({
+      where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
     });
+    if (!module) throw new NotFoundException('Module not found');
 
-    if (isCompleted) {
-      await this.activityService.log(
-        userId,
-        'COURSE_COMPLETED',
-        `Completed ${course.title}`,
-        { courseId },
-      );
+    const sections = ((module.content as any)?.sections ?? []) as Array<{ id: string }>;
+    const sectionIds = sections.map((s) => s.id);
+    if (!sectionIds.includes(sectionId)) {
+      throw new NotFoundException('Section not found in this module');
     }
 
-    return progress;
+    const existing = await this.prisma.moduleProgress.findUnique({
+      where: { userId_moduleId: { userId, moduleId: module.id } },
+    });
+
+    const current = new Set(existing?.completedSectionIds ?? []);
+    if (current.has(sectionId)) {
+      current.delete(sectionId);
+    } else {
+      current.add(sectionId);
+    }
+
+    const completedSectionIds = Array.from(current);
+    const isCompleted = sectionIds.length > 0 && sectionIds.every((id) => current.has(id));
+
+    // Was this the user's first touch on this course at all? Checked before
+    // the upsert below creates the CourseProgress row, since after that it's
+    // too late to tell "just started" apart from "already in progress".
+    const hadCourseProgress = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId: course.id } },
+    });
+
+    const moduleProgress = await this.prisma.moduleProgress.upsert({
+      where: { userId_moduleId: { userId, moduleId: module.id } },
+      update: {
+        completedSectionIds,
+        isCompleted,
+        completedAt: isCompleted ? new Date() : null,
+      },
+      create: {
+        userId,
+        moduleId: module.id,
+        completedSectionIds,
+        isCompleted,
+        completedAt: isCompleted ? new Date() : null,
+      },
+    });
+
+    if (!hadCourseProgress) {
+      await this.activityService.log(userId, 'COURSE_STARTED', `Started ${course.title}`, {
+        courseId: course.id,
+      });
+    }
+
+    await this.recomputeCourseProgress(userId, course.id);
+
+    if (isCompleted && !existing?.isCompleted) {
+      await this.activityService.log(
+        userId,
+        'MODULE_COMPLETED',
+        `Completed "${module.title}" in ${course.title}`,
+        { courseId: course.id, moduleId: module.id },
+      );
+      await this.badgesService.evaluate(userId, 'MODULES_COMPLETED');
+    }
+
+    return moduleProgress;
+  }
+
+  /** Recount from ModuleProgress rather than trust an increment/decrement —
+   *  see toggleSection's comment for why. */
+  private async recomputeCourseProgress(userId: string, courseId: string) {
+    const [course, completedModules] = await Promise.all([
+      this.prisma.course.findUnique({ where: { id: courseId } }),
+      this.prisma.moduleProgress.count({
+        where: { userId, isCompleted: true, module: { courseId } },
+      }),
+    ]);
+    if (!course) return;
+
+    const isCompleted = course.totalModules > 0 && completedModules >= course.totalModules;
+    const wasCompletedBefore = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+
+    await this.prisma.courseProgress.upsert({
+      where: { userId_courseId: { userId, courseId } },
+      update: { completedModules, isCompleted },
+      create: { userId, courseId, completedModules, isCompleted },
+    });
+
+    if (isCompleted && !wasCompletedBefore?.isCompleted) {
+      await this.activityService.log(userId, 'COURSE_COMPLETED', `Completed ${course.title}`, { courseId });
+      await this.badgesService.evaluate(userId, 'COURSES_COMPLETED');
+    }
   }
 
   async countCompleted(userId: string) {
@@ -123,6 +240,8 @@ export class CoursesService {
         title: dto.title,
         description: dto.description,
         category: dto.category,
+        tags: dto.tags ?? [],
+        isFeatured: dto.isFeatured ?? false,
         metadata: (dto.metadata as Prisma.InputJsonValue) ?? undefined,
         totalModules: 0,
       },
@@ -138,6 +257,8 @@ export class CoursesService {
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.metadata !== undefined ? { metadata: dto.metadata as Prisma.InputJsonValue } : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+        ...(dto.isFeatured !== undefined ? { isFeatured: dto.isFeatured } : {}),
       },
     });
   }
@@ -156,7 +277,7 @@ export class CoursesService {
           courseId,
           slug,
           title: dto.title,
-          content: dto.content,
+          content: dto.content as unknown as Prisma.InputJsonValue, // same pattern as dto.metadata cast above
           order: dto.order ?? (await tx.module.count({ where: { courseId } })),
         },
       });

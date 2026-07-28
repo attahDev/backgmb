@@ -18,17 +18,12 @@ app = FastAPI(
     redoc_url="/redoc" if settings.ENVIRONMENT == "development" else None,
     openapi_url="/openapi.json" if settings.ENVIRONMENT == "development" else None,
 )
+_origins = settings.allowed_origins_list
+if not _origins and settings.ENVIRONMENT == "development":
+    _origins = ["http://localhost:3000", "http://localhost:5173"]
 
-# Always allow the known production frontend, plus anything configured
-# via settings.allowed_origins_list (e.g. ALLOWED_ORIGINS env var on Render).
-_origins = set(settings.allowed_origins_list or [])
-_origins.add("https://gmbtefro-pfst.vercel.app")
-if settings.ENVIRONMENT == "development":
-    _origins.update(["http://localhost:3000", "http://localhost:5173"])
-_origins = list(_origins)
 
-print("CORS allowed origins:", _origins)
-
+logger.info("CORS allowed origins: %s", _origins)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
@@ -36,7 +31,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.include_router(proposals.router)
 
 
@@ -45,6 +39,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-
 ui_dir = Path(__file__).parent.parent / "ui"
 app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+app.include_router(proposals.router)

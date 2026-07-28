@@ -5,6 +5,7 @@ from app.models.pitch_deck import PitchDeck, DeckStatus
 from app.services.groq_service import generate_slides
 from app.services.pptx_service import build_pptx
 from app.services.image_service import fetch_slide_images
+from app.services.activity_report import report_activity_sync
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,14 @@ def process_deck_job(
         deck.status = DeckStatus.done
 
         db.commit()
+
+
+        report_activity_sync(
+            user_id,
+            "PITCH_DECK_GENERATED",
+            f"Generated a pitch deck \"{data.get('title') or data.get('idea') or 'Untitled'}\"",
+            {"deckId": str(deck_id)},
+        )
 
 
         set_job_status(

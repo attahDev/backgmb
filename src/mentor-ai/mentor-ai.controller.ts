@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { MentorAiService } from './mentor-ai.service';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { ChatDto } from './dto/chat.dto';
@@ -10,6 +11,7 @@ export class MentorAiController {
   constructor(private readonly mentorAiService: MentorAiService) {}
 
   @UseGuards(JwtAuthGuard)
+  @Throttle({ ai: { limit: 10, ttl: 60_000 } })
   @Post('chat')
   async chat(@Body() dto: ChatDto, @Req() req) {
     // console.log('REQ USER:', req.user);
