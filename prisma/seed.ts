@@ -421,6 +421,7 @@ async function seedTeamAccounts() {
       organization: 'GMBT',
       role: UserRole.ADMIN,
     },
+    ];
 
     
   const created: typeof accounts = [];
