@@ -28,11 +28,6 @@ def _validate_production_config() -> None:
             "JWT_SECRET must be set to a strong random value in production. "
             "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
         )
-    if not settings.ALLOWED_ORIGINS:
-        raise RuntimeError(
-            "ALLOWED_ORIGINS must be set to an explicit list of origins in production. "
-            "Example: https://app.gmbte.com,https://brand.gmbte.com"
-        )
 
 
 @asynccontextmanager
@@ -96,10 +91,15 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+_DEFAULT_PROD_ORIGINS = [
+    "https://frogmbte.vercel.app",
+    "https://www.gmblacktechexpo.co.uk",
+]
+
 _allowed_origins: list[str] = (
     settings.ALLOWED_ORIGINS
     if settings.ALLOWED_ORIGINS
-    else (["*"] if _is_dev else [])
+    else (["*"] if _is_dev else _DEFAULT_PROD_ORIGINS)
 )
 
 app.add_middleware(
