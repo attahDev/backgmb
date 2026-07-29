@@ -140,11 +140,56 @@ export class EventsController {
 
   // ───────────────────────── Admin: event management ─────────────────────────
 
+  /** Admin: create an official event. Accepts either a plain JSON body (no
+   *  image) or multipart/form-data (when an image file is attached) — the
+   *  admin form switches between the two depending on whether formImage is
+   *  set. Previously this only bound @Body() to CreateEventDto, which works
+   *  for JSON but silently fails validation for multipart requests (no
+   *  FileInterceptor meant the multipart stream was never parsed into the
+   *  DTO's fields, so title/startsAt came through empty → 400). Mirrors
+   *  submitCommunityEvent's manual-parsing approach below for the same
+   *  reason: values arrive as strings from multipart but native types from
+   *  JSON, so both need normalizing here rather than trusting class-validator
+   *  alone. */
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  createEvent(@Body() dto: CreateEventDto) {
-    return this.eventsService.createEvent(dto);
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 15 * 1024 * 1024 } }))
+  createEvent(@Body() body: any, @UploadedFile() file?: Express.Multer.File) {
+    if (!body?.title?.toString().trim() || !body?.startsAt) {
+      throw new BadRequestException('Title and start date are required');
+    }
+
+    const parseBoolean = (value: any, fallback: boolean): boolean => {
+      if (value === undefined || value === null || value === '') return fallback;
+      if (typeof value === 'boolean') return value;
+      return value === 'true';
+    };
+
+    const parseTags = (value: any): string[] => {
+      if (Array.isArray(value)) return value.map(String).map((t) => t.trim()).filter(Boolean);
+      if (typeof value === 'string' && value.trim()) {
+        return value.split(',').map((t) => t.trim()).filter(Boolean);
+      }
+      return [];
+    };
+
+    const dto: CreateEventDto = {
+      title: body.title,
+      description: body.description || undefined,
+      location: body.location || undefined,
+      imageUrl: body.imageUrl || undefined,
+      mode: body.mode || undefined,
+      link: body.link || undefined,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt || undefined,
+      isActive: parseBoolean(body.isActive, true),
+      isFeatured: parseBoolean(body.isFeatured, false),
+      audience: body.audience || undefined,
+      tags: parseTags(body.tags),
+    };
+
+    return this.eventsService.createEvent(dto, file);
   }
 
   @Patch(':id')
