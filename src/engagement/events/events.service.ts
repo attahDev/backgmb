@@ -189,13 +189,19 @@ export class EventsService {
 
   // ───────────────────────── Admin: event management ─────────────────────────
 
-  async createEvent(dto: CreateEventDto) {
+  async createEvent(dto: CreateEventDto, file?: Express.Multer.File) {
+    let imageUrl = dto.imageUrl;
+    if (file) {
+      const uploaded = await this.uploadsService.uploadEventImage(file);
+      imageUrl = uploaded.url;
+    }
+
     return this.prisma.event.create({
       data: {
         title: dto.title,
         description: dto.description,
         location: dto.location,
-        imageUrl: dto.imageUrl,
+        imageUrl,
         mode: dto.mode,
         link: dto.link,
         tags: dto.tags ?? [],
