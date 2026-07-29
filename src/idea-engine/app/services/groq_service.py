@@ -8,6 +8,7 @@ from groq import Groq, APIConnectionError, APIStatusError
 
 from app.core.config import settings
 from app.schemas.idea import IdeaContent
+from app.services.tavily_search import search_web, format_web_results_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,29 @@ async def generate_idea_content(payload) -> dict:
         context_parts.append(f"Goal: {payload.goal}")
     prompt = "\n".join(context_parts)
 
+    # Best-effort grounding: real competitors, pricing, and market conditions
+    # for this specific idea/industry/location. search_web() never raises —
+    # returns [] on any failure or missing TAVILY_API_KEY — so this can never
+    # block idea generation, only enrich it when available.
+    search_query_parts = [payload.business_idea]
+    if payload.industry:
+        search_query_parts.append(payload.industry)
+    if payload.location:
+        search_query_parts.append(payload.location)
+    search_query_parts.append("market competitors")
+    web_results = await search_web(" ".join(search_query_parts), max_results=4)
+    web_context = format_web_results_for_prompt(web_results)
+
+    grounding_suffix = (
+        f"\n\nCurrent web search results you can draw on for grounding real competitors, "
+        f"pricing, and market conditions (synthesize in your own words, never quote "
+        f"verbatim, and don't force them in if not relevant):\n\n{web_context}"
+        if web_context
+        else ""
+    )
+    system_prompt = SYSTEM_PROMPT + grounding_suffix
+    strict_system_prompt = STRICT_SYSTEM_PROMPT + grounding_suffix
+
     def _validate(data: dict) -> dict:
         missing = [k for k in IdeaContent.model_fields.keys() if k not in data]
         if missing:
@@ -163,12 +187,12 @@ async def generate_idea_content(payload) -> dict:
         return data
 
     try:
-        raw = await _call_groq(prompt, SYSTEM_PROMPT)
+        raw = await _call_groq(prompt, system_prompt)
         return _coerce_str_fields(_validate(_parse_groq_response(raw)))
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning("First Groq attempt failed to parse/validate: %s. Retrying...", e)
         try:
-            raw = await _call_groq(prompt, STRICT_SYSTEM_PROMPT)
+            raw = await _call_groq(prompt, strict_system_prompt)
             return _coerce_str_fields(_validate(_parse_groq_response(raw)))
         except (json.JSONDecodeError, ValueError) as e2:
             logger.error("Second Groq attempt also failed: %s", e2)
