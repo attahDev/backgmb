@@ -45,7 +45,6 @@ model User {
   verificationSessions VerificationSession[]
   mentorChats          MentorChat[]
   businessPlans        BusinessPlan[]
-  comments Comment[]
 
   brandAssets          BrandAsset[]
   chatSessions         ChatSession[]
@@ -905,7 +904,6 @@ model SpotlightStory {
   createdAt DateTime @default(now())
 
   likedBy     SpotlightLike[]
-  commentList Comment[]
 
   @@index([status])
   @@index([isPublished])
@@ -915,22 +913,14 @@ model SpotlightStory {
 
 
 model Comment {
-  id String @id @default(uuid())
-
-  storyId String
-  story SpotlightStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
-
-  userId String?
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  content String
-
-  flagged    Boolean @default(false)
+  id         String   @id @default(uuid())
+  postId     String
+  authorId   String
+  content    String
+  createdAt  DateTime @default(now())
+  flagged    Boolean  @default(false)
   flagReason String?
 
-  createdAt DateTime @default(now())
-
-  @@index([storyId])
   @@map("comments")
 }
 

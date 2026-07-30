@@ -355,24 +355,44 @@ export class CommunityService {
     }
 
 
-    return this.prisma.comment.findMany({
+    const comments = await this.prisma.comment.findMany({
       where: {
-        storyId,
+        postId: storyId,
         flagged: false,
       },
 
       orderBy: {
         createdAt: 'asc',
       },
+    });
 
-      include: {
-        user: {
-          select: {
-            firstname: true,
-            lastname: true,
-          },
+    return this.attachAuthors(comments);
+  }
+
+  /** Comment no longer has a Prisma relation to User (the live `comments`
+   *  table is flat — just an authorId column, no FK declared) so author
+   *  names are fetched separately and merged in, instead of `include`. */
+  private async attachAuthors<T extends { authorId: string }>(
+    comments: T[],
+  ): Promise<(T & { author: { firstname: string; lastname: string } })[]> {
+    if (!comments.length) return [];
+
+    const authorIds = [...new Set(comments.map((c) => c.authorId))];
+    const authors = await this.prisma.user.findMany({
+      where: { id: { in: authorIds } },
+      select: { id: true, firstname: true, lastname: true },
+    });
+    const byId = new Map(authors.map((a) => [a.id, a]));
+
+    return comments.map((c) => {
+      const author = byId.get(c.authorId);
+      return {
+        ...c,
+        author: {
+          firstname: author?.firstname ?? 'Unknown',
+          lastname: author?.lastname ?? '',
         },
-      },
+      };
     });
   }
 
@@ -410,21 +430,12 @@ export class CommunityService {
 
         this.prisma.comment.create({
           data: {
-            storyId,
+            postId: storyId,
 
-            userId,
+            authorId: userId,
 
             content:
               content.trim(),
-          },
-
-          include: {
-            user: {
-              select: {
-                firstname: true,
-                lastname: true,
-              },
-            },
           },
         }),
 
@@ -479,7 +490,8 @@ export class CommunityService {
       /* moderateComment already logs its own failures */
     });
 
-    return comment;
+    const [withAuthor] = await this.attachAuthors([comment]);
+    return withAuthor;
   }
 
   /** Runs the automated content check against a just-posted comment. Only
@@ -496,8 +508,8 @@ export class CommunityService {
       },
     });
 
-    if (comment.userId) {
-      await this.notificationsService.notifyUser(comment.userId, {
+    if (comment.authorId) {
+      await this.notificationsService.notifyUser(comment.authorId, {
         category: NotificationCategory.COMMUNITY,
         title: 'Your comment was flagged for review',
         body: 'Your comment was hidden pending admin review.',
@@ -511,7 +523,7 @@ export class CommunityService {
       body: `A comment was flagged: ${result.reason}`,
       actionLabel: 'Review',
       actionUrl: '/dashboard/admin/community',
-      metadata: { commentId, storyId: comment.storyId },
+      metadata: { commentId, postId: comment.postId },
     });
   }
 
@@ -538,7 +550,7 @@ export class CommunityService {
     }
 
 
-    if (comment.userId !== userId) {
+    if (comment.authorId !== userId) {
       throw new ForbiddenException(
         'Not your comment',
       );
@@ -557,7 +569,7 @@ export class CommunityService {
 
       this.prisma.spotlightStory.update({
         where: {
-          id: comment.storyId,
+          id: comment.postId,
         },
 
         data: {
@@ -609,7 +621,7 @@ export class CommunityService {
 
       this.prisma.spotlightStory.update({
         where: {
-          id: comment.storyId,
+          id: comment.postId,
         },
 
         data: {
@@ -752,15 +764,11 @@ export class CommunityService {
   // ---------------- ADMIN COMMENT MODERATION ----------------
 
   async findFlaggedComments() {
-    return this.prisma.comment.findMany({
+    const comments = await this.prisma.comment.findMany({
       where: { flagged: true },
       orderBy: { createdAt: 'asc' },
-      include: {
-        user: {
-          select: { firstname: true, lastname: true },
-        },
-      },
     });
+    return this.attachAuthors(comments);
   }
 
   async approveComment(commentId: string) {
