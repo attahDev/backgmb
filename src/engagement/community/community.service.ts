@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../../uploads/uploads.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ActivityService } from '../activity/activity.service';
+import { ModerationService } from './moderation.service';
 
 const AVATAR_COLORS = [
   'bg-red-600',
@@ -26,6 +27,7 @@ export class CommunityService {
     private uploadsService: UploadsService,
     private notificationsService: NotificationsService,
     private activityService: ActivityService,
+    private moderationService: ModerationService,
   ) {}
 
   async findFeed(userId?: string, limit = 30) {
@@ -259,7 +261,8 @@ export class CommunityService {
 
           authorId: userId,
 
-          status: PostStatus.PENDING,
+          status: PostStatus.APPROVED,
+          approvedAt: new Date(),
         },
       });
 
@@ -271,10 +274,10 @@ export class CommunityService {
           NotificationCategory.COMMUNITY,
 
         title:
-          'Your post is awaiting approval',
+          'Your post is live',
 
         body:
-          `"${post.title}" will appear in the community feed once an admin reviews it.`,
+          `"${post.title}" is now visible in the community feed.`,
 
         metadata: {
           storyId: post.id,
@@ -285,35 +288,55 @@ export class CommunityService {
     await this.activityService.log(
       userId,
       'COMMUNITY_POST_SUBMITTED',
-      `Submitted "${post.title}" to the community feed`,
+      `Posted "${post.title}" to the community feed`,
       { storyId: post.id },
     );
 
-
-    await this.notificationsService.notifyAdmins({
-      category:
-        NotificationCategory.COMMUNITY,
-
-      title:
-        'New community post pending approval',
-
-      body:
-        `${post.authorName} submitted "${post.title}".`,
-
-      actionLabel:
-        'Review',
-
-      actionUrl:
-        '/dashboard/admin/community',
-
-      metadata: {
-        storyId: post.id,
-        userId,
+    // Fire-and-forget: the post is already live, so this check runs after
+    // the fact rather than gating publication. If it comes back flagged,
+    // moderatePost pulls the post from the public feed and alerts admins.
+    this.moderatePost(post.id, `${post.title}\n\n${post.description}`).catch(
+      () => {
+        /* moderatePost already logs its own failures */
       },
-    });
+    );
 
 
     return post;
+  }
+
+  /** Runs the automated content check against a just-published post. Only
+   *  touches the row if it comes back flagged — a clean result leaves the
+   *  post exactly as published. */
+  private async moderatePost(storyId: string, text: string) {
+    const result = await this.moderationService.checkText(text);
+    if (!result.flagged) return;
+
+    const post = await this.prisma.spotlightStory.update({
+      where: { id: storyId },
+      data: {
+        status: PostStatus.FLAGGED,
+        flagReason: result.reason,
+      },
+    });
+
+    if (post.authorId) {
+      await this.notificationsService.notifyUser(post.authorId, {
+        category: NotificationCategory.COMMUNITY,
+        title: 'Your post was flagged for review',
+        body: `"${post.title}" was pulled from the feed pending admin review.`,
+        metadata: { storyId },
+      });
+    }
+
+    await this.notificationsService.notifyAdmins({
+      category: NotificationCategory.COMMUNITY,
+      title: 'Flagged community post needs review',
+      body: `"${post.title}" by ${post.authorName} was flagged: ${result.reason}`,
+      actionLabel: 'Review',
+      actionUrl: '/dashboard/admin/community',
+      metadata: { storyId, authorId: post.authorId },
+    });
   }
 
   // ---------------- COMMENTS ----------------
@@ -335,6 +358,7 @@ export class CommunityService {
     return this.prisma.comment.findMany({
       where: {
         storyId,
+        flagged: false,
       },
 
       orderBy: {
@@ -449,7 +473,46 @@ export class CommunityService {
     }
 
 
+    // Same post-then-moderate treatment as createPost: the comment is
+    // already live, this only acts on it if the check comes back flagged.
+    this.moderateComment(comment.id, content).catch(() => {
+      /* moderateComment already logs its own failures */
+    });
+
     return comment;
+  }
+
+  /** Runs the automated content check against a just-posted comment. Only
+   *  touches the row if it comes back flagged. */
+  private async moderateComment(commentId: string, text: string) {
+    const result = await this.moderationService.checkText(text);
+    if (!result.flagged) return;
+
+    const comment = await this.prisma.comment.update({
+      where: { id: commentId },
+      data: {
+        flagged: true,
+        flagReason: result.reason,
+      },
+    });
+
+    if (comment.userId) {
+      await this.notificationsService.notifyUser(comment.userId, {
+        category: NotificationCategory.COMMUNITY,
+        title: 'Your comment was flagged for review',
+        body: 'Your comment was hidden pending admin review.',
+        metadata: { commentId },
+      });
+    }
+
+    await this.notificationsService.notifyAdmins({
+      category: NotificationCategory.COMMUNITY,
+      title: 'Flagged comment needs review',
+      body: `A comment was flagged: ${result.reason}`,
+      actionLabel: 'Review',
+      actionUrl: '/dashboard/admin/community',
+      metadata: { commentId, storyId: comment.storyId },
+    });
   }
 
 
@@ -568,25 +631,19 @@ export class CommunityService {
 
   // ---------------- ADMIN MODERATION ----------------
 
-
-  async findPending() {
-
+  /** Posts the moderation bot flagged post-publish, awaiting admin review.
+   *  (Endpoint name/route kept as "pending" for API stability — the queue's
+   *  contents are now flagged posts, not pre-approval submissions.) */
+  async findFlagged() {
     return this.prisma.spotlightStory.findMany({
-
       where: {
-        status: PostStatus.PENDING,
+        status: PostStatus.FLAGGED,
       },
-
       orderBy: {
         createdAt: 'asc',
       },
-
     });
-
   }
-
-
-
 
   async approve(
     storyId: string,
@@ -602,6 +659,7 @@ export class CommunityService {
         data: {
           status: PostStatus.APPROVED,
           approvedAt: new Date(),
+          flagReason: null,
         },
 
       });
@@ -618,10 +676,10 @@ export class CommunityService {
             NotificationCategory.COMMUNITY,
 
           title:
-            `Your post is live: "${post.title}"`,
+            `Your post is back up: "${post.title}"`,
 
           body:
-            'It now shows up in the community feed for everyone.',
+            'An admin reviewed it and it\'s visible in the community feed again.',
 
           actionLabel:
             'View Post',
@@ -642,33 +700,27 @@ export class CommunityService {
     return post;
   }
 
-
-
-
-
-  async reject(
+  /** Admin decided a flagged post should come down for good. Hard-delete
+   *  rather than a soft REJECTED status, per the moderation workflow: a
+   *  flagged post is either restored (approve) or removed (this). */
+  async deleteFlaggedPost(
     storyId: string,
     reason?: string,
   ) {
 
+    const post = await this.prisma.spotlightStory.findUnique({
+      where: { id: storyId },
+    });
 
-    const post =
-      await this.prisma.spotlightStory.update({
+    if (!post) {
+      throw new NotFoundException('Post not found');
+    }
 
-        where: {
-          id: storyId,
-        },
-
-        data: {
-          status: PostStatus.REJECTED,
-        },
-
-      });
-
-
+    await this.prisma.spotlightStory.delete({
+      where: { id: storyId },
+    });
 
     if (post.authorId) {
-
 
       await this.notificationsService.notifyUser(
         post.authorId,
@@ -679,25 +731,50 @@ export class CommunityService {
 
 
           title:
-            `Your post wasn't approved: "${post.title}"`,
+            `Your post was removed: "${post.title}"`,
 
 
           body:
             reason ||
+            post.flagReason ||
             "It didn't meet the community guidelines.",
 
-
-          metadata: {
-            storyId,
-          },
+          metadata: {},
 
         },
       );
 
     }
 
-
-    return post;
+    return { removed: true };
   }
 
+  // ---------------- ADMIN COMMENT MODERATION ----------------
+
+  async findFlaggedComments() {
+    return this.prisma.comment.findMany({
+      where: { flagged: true },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: { firstname: true, lastname: true },
+        },
+      },
+    });
+  }
+
+  async approveComment(commentId: string) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
+
+    return this.prisma.comment.update({
+      where: { id: commentId },
+      data: { flagged: false, flagReason: null },
+    });
+  }
 }

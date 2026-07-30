@@ -229,6 +229,11 @@ model BusinessPlan {
 
   aiResponse Json
 
+  // Indexes into aiResponse.data.next_actions that the user has checked off.
+  // Kept separate from aiResponse so the AI-generated content stays immutable
+  // and we don't need to rewrite the whole JSON blob on every checkbox click.
+  completedActionIndexes Int[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -326,6 +331,12 @@ model ChatMessage {
   aiStatus   String?
   aiRawReply Json?
 
+  // Populated only for BOT messages when Nora's reply maps to a specific
+  // in-app page (e.g. "/dashboard/opportunities") — frontend renders it as
+  // a clickable button under the reply instead of forcing the user to
+  // guess where to navigate.
+  suggestedRoute String?
+
   createdAt DateTime @default(now())
 
   @@index([sessionId])
@@ -349,6 +360,27 @@ enum ChatSender {
   USER
   BOT
 }
+
+// Curated narrative platform knowledge for Nora (the main platform chatbot) —
+// things like "how mentorship works here" that aren't sitting in a table
+// the way jobs/events/courses are. Admin-maintained; kept deliberately small
+// and hand-written rather than auto-generated, so Nora's account of "how the
+// platform works" stays accurate and on-brand.
+model KnowledgeArticle {
+  id String @id @default(uuid())
+
+  title    String
+  body     String
+  category String? // e.g. "mentorship", "fellowship", "getting-started"
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("knowledge_articles")
+}
+
 // ---------------------------------------------------------------------------
 // Engagement models — mentors, opportunities, courses, events, badges,
 // activity feed, community spotlight. Added to back the Student Dashboard,
@@ -861,8 +893,9 @@ model SpotlightStory {
   avatarColor String? @default("bg-red-600")
   imageUrl    String?
 
-  status     PostStatus @default(PENDING)
+  status     PostStatus @default(APPROVED)
   approvedAt DateTime?
+  flagReason String?
 
   likes    Int @default(0)
   comments Int @default(0)
@@ -891,6 +924,9 @@ model Comment {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   content String
+
+  flagged    Boolean @default(false)
+  flagReason String?
 
   createdAt DateTime @default(now())
 
@@ -955,6 +991,7 @@ enum NotificationCategory {
 enum PostStatus {
   PENDING
   APPROVED
+  FLAGGED
   REJECTED
 }
 

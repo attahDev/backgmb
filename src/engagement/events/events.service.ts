@@ -187,6 +187,35 @@ export class EventsService {
     return event;
   }
 
+  /** Admin's "who's expected" list for an event — everyone who's RSVP'd
+   *  (REGISTERED) through GMBTE, whether the event links out to Eventbrite
+   *  or not. This is GMBTE's own attendance record, independent of
+   *  whatever Eventbrite's own dashboard shows. */
+  async findAttendees(eventId: string) {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const attendees = await this.prisma.eventAttendance.findMany({
+      where: { eventId, status: ATTENDANCE_STATUS.REGISTERED },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: { select: { id: true, firstname: true, lastname: true, email: true } },
+      },
+    });
+
+    return {
+      eventId,
+      eventTitle: event.title,
+      count: attendees.length,
+      attendees: attendees.map((a) => ({
+        userId: a.user.id,
+        name: `${a.user.firstname} ${a.user.lastname}`,
+        email: a.user.email,
+        registeredAt: a.createdAt,
+      })),
+    };
+  }
+
   // ───────────────────────── Admin: event management ─────────────────────────
 
   async createEvent(dto: CreateEventDto, file?: Express.Multer.File) {

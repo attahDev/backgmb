@@ -78,6 +78,17 @@ export class EventsController {
     return this.eventsService.findOne(id);
   }
 
+  /** Admin's "expected invitees" list — everyone who's RSVP'd through
+   *  GMBTE for this event, regardless of whether it links out to
+   *  Eventbrite. Static path segment, registered before the admin ':id'
+   *  routes below for the same reason as findOne above. */
+  @Get('admin/:id/attendees')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  findAttendees(@Param('id') id: string) {
+    return this.eventsService.findAttendees(id);
+  }
+
   /** "Host an Event" — any authenticated member can submit one. No
    *  RolesGuard: this is deliberately open to everyone, unlike admin
    *  createEvent() below. Multipart: same fields as CreateCommunityEventDto
