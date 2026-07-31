@@ -8,6 +8,8 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.credits_db import get_credits_db
+from app.core.config import settings
 from app.middleware.auth import get_current_user
 from app.models.proposal import Proposal
 from app.schemas.proposal import (
@@ -19,6 +21,7 @@ from app.schemas.proposal import (
     ProposalUpdateRequest,
 )
 from app.services import groq_service, pdf_service, docx_service
+from app.services import credits_service
 from app.services.activity_report import report_activity
 from app.services.rate_limiter import RateLimitExceeded, enforce_rate_limit
 
@@ -65,6 +68,7 @@ async def generate_proposal(
     body: GenerateRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
+    credits_db: AsyncSession = Depends(get_credits_db),
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user["user_id"]
@@ -80,6 +84,20 @@ async def generate_proposal(
             detail=f"Too many requests ({e.scope}). Try again in {e.retry_after}s.",
         )
 
+    # ── Gate 1: entitlement ────────────────────────────────────────────────
+    if not await credits_service.is_entitled(credits_db, user_id):
+        raise credits_service.entitlement_error()
+
+    # ── Gate 2: reserve credits before calling Groq. Generation here is
+    #    synchronous within this handler, so commit/refund happen inline
+    #    too — no background worker for this service. ─────────────────────
+    try:
+        txn_id = await credits_service.reserve_credits(
+            credits_db, user_id, settings.PROPOSAL_CREDIT_COST
+        )
+    except credits_service.InsufficientCredits:
+        raise credits_service.insufficient_credits_error()
+
     try:
         data = await groq_service.generate_proposal(
             body.prompt,
@@ -88,12 +106,21 @@ async def generate_proposal(
         )
     except ValueError as e:
         logger.error("Groq response parsing failed for user %s: %s", user_id, e)
+        await credits_service.refund_credits(
+            credits_db, user_id, settings.PROPOSAL_CREDIT_COST, txn_id
+        )
         raise HTTPException(status_code=500, detail="Proposal generation failed. Please try again.")
     except ConnectionError as e:
         logger.error("Groq API unreachable for user %s: %s", user_id, e)
+        await credits_service.refund_credits(
+            credits_db, user_id, settings.PROPOSAL_CREDIT_COST, txn_id
+        )
         raise HTTPException(status_code=503, detail="Proposal generation is temporarily unavailable.")
     except RuntimeError as e:
         logger.error("Groq API error for user %s: %s", user_id, e)
+        await credits_service.refund_credits(
+            credits_db, user_id, settings.PROPOSAL_CREDIT_COST, txn_id
+        )
         raise HTTPException(status_code=502, detail="Proposal generation failed upstream.")
 
     content = {k: data[k] for k in ProposalContent.model_fields.keys()}
@@ -111,8 +138,17 @@ async def generate_proposal(
         content=content,
     )
     db.add(proposal)
-    await db.commit()
+
+    try:
+        await db.commit()
+    except Exception:
+        await credits_service.refund_credits(
+            credits_db, user_id, settings.PROPOSAL_CREDIT_COST, txn_id
+        )
+        raise
     await db.refresh(proposal)
+
+    await credits_service.commit_credits(credits_db, user_id, txn_id)
 
     await report_activity(
         user_id,

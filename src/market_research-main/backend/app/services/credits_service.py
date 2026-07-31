@@ -13,15 +13,17 @@ import logging
 
 from app.core import credits_db
 from app.core.config import (
-    CREDIT_COST_CACHE, CREDIT_COST_FRESH, ENTITLED_PLANS, SERVICE_NAME,
+    CREDIT_COST_CACHE, CREDIT_COST_FRESH, MIN_TIER, SERVICE_NAME, TIER_RANK,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def is_entitled(plan_tier: str) -> bool:
-    """Gate 1 — does this plan tier include Research AI at all? No DB call."""
-    return plan_tier in ENTITLED_PLANS
+    """Gate 1 — does this plan tier include Research AI at all? No DB call
+    (the tier itself was already looked up once by middleware.py per request
+    and cached on request.state.plan_tier)."""
+    return TIER_RANK.get(plan_tier, 0) >= TIER_RANK[MIN_TIER]
 
 
 def cost_for(source: str) -> int:

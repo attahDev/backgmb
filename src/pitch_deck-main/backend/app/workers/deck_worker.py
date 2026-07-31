@@ -6,6 +6,8 @@ from app.services.groq_service import generate_slides
 from app.services.pptx_service import build_pptx
 from app.services.image_service import fetch_slide_images
 from app.services.activity_report import report_activity_sync
+from app.services import credits_service
+from app.core.credits_db import CreditsSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ def process_deck_job(
     input_type: str,
     data: dict,
     db: Session,
+    reference_id: str,
     theme: str = "gmbte",
 ):
 
@@ -105,6 +108,11 @@ def process_deck_job(
 
         db.commit()
 
+        credits_db = CreditsSessionLocal()
+        try:
+            credits_service.commit_credits(credits_db, user_id, reference_id)
+        finally:
+            credits_db.close()
 
         report_activity_sync(
             user_id,
@@ -138,6 +146,11 @@ def process_deck_job(
 
         db.commit()
 
+        credits_db = CreditsSessionLocal()
+        try:
+            credits_service.refund_credits(credits_db, user_id, reference_id)
+        finally:
+            credits_db.close()
 
         set_job_status(
             job_id,

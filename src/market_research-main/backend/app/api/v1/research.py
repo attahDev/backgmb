@@ -12,7 +12,7 @@ from app.core.cache import (
     acquire_lock, cache_result, check_idempotency, get_cached_result,
     get_inflight_job_id, release_lock, set_idempotency,
 )
-from app.core.config import settings
+from app.core.config import settings, CREDIT_COST_CACHE, CREDIT_COST_FRESH
 from app.core.database import AsyncSessionLocal, get_db
 from app.models.research import ResearchJob, ResearchResult
 from app.schemas.research import (
@@ -24,6 +24,7 @@ from app.schemas.research import (
 from app.services.aggregator import aggregate
 from app.services.activity_report import report_activity
 from app.services.classifier import classify_query, normalize_query
+from app.services.credits_service import is_entitled, reserve, commit, refund
 from app.services.job_utils import increment_retry_count, update_job_status
 from app.services.rate_limiter import check_rate_limit
 from app.services.summarizer import summarize
@@ -159,6 +160,9 @@ async def run_research_pipeline(job_id: str, query: str, query_normalized: str, 
             )
             await db.commit()
 
+        if user_id:
+            await commit(user_id, CREDIT_COST_FRESH, job_id)
+
         await cache_result(
             query_normalized,
             {
@@ -189,6 +193,8 @@ async def run_research_pipeline(job_id: str, query: str, query_normalized: str, 
     except Exception as e:
         logger.exception(f"Pipeline failed: job={job_id}")
         await update_job_status(job_id, "failed", error=str(e))
+        if user_id:
+            await refund(user_id, CREDIT_COST_FRESH, job_id)
 
     finally:
         await release_lock(query_normalized)
@@ -230,10 +236,33 @@ async def create_research_job(
                 status_code=429,
             )
 
+    # ── Gate: entitlement (Founder tier and above), no DB call — plan_tier
+    #    was already looked up once by AuthMiddleware for this request. ────
+    if not is_entitled(plan_tier):
+        _error(
+            "NOT_ENTITLED",
+            f"Market Research AI requires Founder tier or above (current: {plan_tier}).",
+            request,
+            status_code=403,
+        )
+
     cached = await get_cached_result(query_normalized)
 
     if cached:
+        job_id_uuid = uuid.uuid4()
+        job_id = str(job_id_uuid)
+
+        try:
+            reservation = await reserve(user_id, CREDIT_COST_CACHE, job_id)
+        except Exception:
+            reservation = {"status": "error"}
+        if reservation["status"] == "insufficient":
+            _error("INSUFFICIENT_CREDITS", "Insufficient credits.", request, status_code=402)
+        if reservation["status"] == "error":
+            _error("CREDITS_UNAVAILABLE", "Credits service unavailable. Please try again.", request, status_code=503)
+
         job = ResearchJob(
+            id=job_id_uuid,
             query=query,
             query_normalized=query_normalized,
             status="complete",
@@ -261,6 +290,12 @@ async def create_research_job(
         ))
 
         await db.commit()
+
+        # Cache path finishes synchronously in this handler — commit the
+        # reservation right away rather than waiting on a background task
+        # that doesn't exist for this path.
+        if user_id:
+            await commit(user_id, CREDIT_COST_CACHE, job_id)
 
         await report_activity(
             user_id,
@@ -291,9 +326,20 @@ async def create_research_job(
     )
     db.add(job)
     await db.flush()
-    await db.commit()
 
     job_id = str(job.id)
+
+    try:
+        reservation = await reserve(user_id, CREDIT_COST_FRESH, job_id)
+    except Exception:
+        reservation = {"status": "error"}
+    if reservation["status"] == "insufficient":
+        _error("INSUFFICIENT_CREDITS", "Insufficient credits.", request, status_code=402)
+    if reservation["status"] == "error":
+        _error("CREDITS_UNAVAILABLE", "Credits service unavailable. Please try again.", request, status_code=503)
+
+    await db.commit()
+
     await acquire_lock(query_normalized, job_id)
 
     background_tasks.add_task(run_research_pipeline, job_id, query, query_normalized, user_id)

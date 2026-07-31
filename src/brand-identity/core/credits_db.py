@@ -36,6 +36,7 @@ def _get_credits_engine():
 
 
 async def get_credits_db() -> AsyncSession:
+    """FastAPI dependency form — for use in router functions via Depends()."""
     _, session_factory = _get_credits_engine()
     async with session_factory() as session:
         try:
@@ -43,6 +44,13 @@ async def get_credits_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
+
+
+def credits_session():
+    """Plain async-context-manager form — for use outside a FastAPI request,
+    e.g. the background worker (`async with credits_session() as db:`)."""
+    _, session_factory = _get_credits_engine()
+    return session_factory()
 
 
 async def dispose_credits_engine() -> None:

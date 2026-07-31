@@ -1,4 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpException,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
@@ -7,7 +21,13 @@ import { Roles } from '../../decorators/roles.decorator';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { CoursesService } from './courses.service';
 import { PdfExtractionService } from './pdf-extraction.service';
-import { CreateCourseDto, CreateModuleDto, UpdateCourseDto, UpdateModuleDto } from './dto/module.dto';
+import { InsufficientCreditsError } from '../../credits/credits.service';
+import {
+  CreateCourseDto,
+  CreateModuleDto,
+  UpdateCourseDto,
+  UpdateModuleDto,
+} from './dto/module.dto';
 
 @Controller('courses')
 @UseGuards(JwtAuthGuard)
@@ -24,7 +44,9 @@ export class CoursesController {
   @Post('extract-pdf')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 40 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 40 * 1024 * 1024 } }),
+  )
   extractFromPdf(@UploadedFile() file: Express.Multer.File) {
     return this.pdfExtractionService.extractModuleContent(file);
   }
@@ -39,7 +61,11 @@ export class CoursesController {
     @Query('category') category?: string,
     @Query('includeInactive') includeInactive?: string,
   ) {
-    return this.coursesService.findAllWithProgress(user.userId, category, includeInactive === 'true');
+    return this.coursesService.findAllWithProgress(
+      user.userId,
+      category,
+      includeInactive === 'true',
+    );
   }
 
   /** ?ids=a,b,c,d — one round trip for a course list page that used to fire
@@ -50,13 +76,33 @@ export class CoursesController {
    *  /courses/modules as id='modules'. */
   @Get('modules')
   findModulesBatch(@Query('ids') ids: string) {
-    const courseIds = (ids ?? '').split(',').map((id) => id.trim()).filter(Boolean);
+    const courseIds = (ids ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
     return this.coursesService.findModulesForCourses(courseIds);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.coursesService.findOne(id);
+  }
+
+  /** Pay once (if the course has a creditCost), unlock the whole course.
+   *  Frontend is expected to show a pay-confirmation screen using the
+   *  creditCost already on the course object (from findAll/findOne) before
+   *  ever calling this — this endpoint enforces it server-side regardless,
+   *  it doesn't replace that proactive check. */
+  @Post(':id/enroll')
+  async enroll(@CurrentUser() user: any, @Param('id') id: string) {
+    try {
+      return await this.coursesService.enroll(user.userId, id);
+    } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        throw new HttpException(e.message, HttpStatus.PAYMENT_REQUIRED);
+      }
+      throw e;
+    }
   }
 
   /** What the frontend fetches instead of sustainabilityCourses.ts / the
@@ -69,8 +115,29 @@ export class CoursesController {
   // ── Slug-based lookups: match the /dashboard/green-impact/:courseSlug and
   //    /dashboard/green-impact/:courseSlug/:lessonSlug frontend routes. ──
   @Get('by-slug/:courseSlug')
-  findBySlug(@Param('courseSlug') courseSlug: string) {
-    return this.coursesService.findBySlug(courseSlug);
+  findBySlug(
+    @CurrentUser() user: any,
+    @Param('courseSlug') courseSlug: string,
+  ) {
+    return this.coursesService.findBySlugWithEnrollment(
+      user.userId,
+      courseSlug,
+    );
+  }
+
+  @Post('by-slug/:courseSlug/enroll')
+  async enrollBySlug(
+    @CurrentUser() user: any,
+    @Param('courseSlug') courseSlug: string,
+  ) {
+    try {
+      return await this.coursesService.enrollBySlug(user.userId, courseSlug);
+    } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        throw new HttpException(e.message, HttpStatus.PAYMENT_REQUIRED);
+      }
+      throw e;
+    }
   }
 
   @Get('by-slug/:courseSlug/modules')
@@ -84,7 +151,11 @@ export class CoursesController {
     @Param('courseSlug') courseSlug: string,
     @Param('lessonSlug') lessonSlug: string,
   ) {
-    return this.coursesService.findModuleBySlug(courseSlug, lessonSlug, user.userId);
+    return this.coursesService.findModuleBySlug(
+      courseSlug,
+      lessonSlug,
+      user.userId,
+    );
   }
 
   /** The "mark this chapter/section done" checkbox. Toggles completion for
@@ -97,7 +168,12 @@ export class CoursesController {
     @Param('lessonSlug') lessonSlug: string,
     @Param('sectionId') sectionId: string,
   ) {
-    return this.coursesService.toggleSection(user.userId, courseSlug, lessonSlug, sectionId);
+    return this.coursesService.toggleSection(
+      user.userId,
+      courseSlug,
+      lessonSlug,
+      sectionId,
+    );
   }
 
   // ───────────────────────── Admin: upload-driven content ─────────────────────────
@@ -137,7 +213,10 @@ export class CoursesController {
   @Delete(':id/modules/:moduleId')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
-  removeModule(@Param('id') courseId: string, @Param('moduleId') moduleId: string) {
+  removeModule(
+    @Param('id') courseId: string,
+    @Param('moduleId') moduleId: string,
+  ) {
     return this.coursesService.removeModule(courseId, moduleId);
   }
 }

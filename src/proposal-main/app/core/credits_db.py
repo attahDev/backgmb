@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from app.core.config import settings
 
 credits_engine = create_async_engine(
-    settings.credits_database_url,
+    settings.CREDITS_DATABASE_URL,
     pool_size=5,
     max_overflow=2,
     echo=False,

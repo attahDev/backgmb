@@ -69,6 +69,10 @@ model User {
   skillLogs             SkillLog[]
   careerGoal            MenteeCareerGoal?
 
+  subscription         Subscription?
+  userCredits          UserCredits?
+  aiCreditTransactions AiCreditTransaction[]
+
   @@map("users")
 }
 
@@ -529,6 +533,11 @@ model Course {
   // exists so list views don't need a join/count on every request.
   totalModules Int     @default(0)
   isActive     Boolean @default(true)
+  // 0 = free, covered by Student-tier "Student Resources" — the default for
+  // nearly every course. Only set nonzero on genuinely premium/one-off
+  // courses sold on top of the subscription. Gating is at enrollment (this
+  // field), not per-module.
+  creditCost   Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1104,4 +1113,94 @@ model MenteeCareerGoal {
   setAt                DateTime  @default(now())
 
   @@map("mentee_career_goals")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// AI credit system (subscription tier, credit balance, and the AI-usage
+// ledger). Deliberately separate from CreditListing/CreditTransaction above,
+// which is the pre-existing Green Impact eco-points marketplace — do not
+// merge these.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum SubscriptionTier {
+  EXPLORER
+  STUDENT
+  PROFESSIONAL
+  FOUNDER
+  EXECUTIVE
+  TEAM
+  ENTERPRISE
+}
+
+/** MANUAL = admin/seed-granted, no Stripe involved — used for testing and
+ *  for any user given a tier before Stripe billing is wired in. Once Stripe
+ *  is connected, webhooks create/update the same rows with ACTIVE/TRIALING/
+ *  PAST_DUE/CANCELED and real Stripe IDs; no schema change needed then. */
+enum SubscriptionStatus {
+  MANUAL
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+}
+
+model Subscription {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tier   SubscriptionTier   @default(EXPLORER)
+  status SubscriptionStatus @default(MANUAL)
+
+  // Per-user monthly credit allowance. Populated from the tier's default at
+  // grant time but stored (not just derived from `tier`) so Enterprise
+  // custom deals and one-off adjustments don't need a special case.
+  monthlyAllowance Int
+
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  currentPeriodEnd     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tier])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/** Column names/types here are load-bearing: the Python microservices
+ *  (market_research-main, pitch_deck-main, proposal-main, brand-identity,
+ *  idea-engine) hit this table with raw SQL, not the Prisma client, so
+ *  `@map` on every field must match credits_db.py's queries exactly:
+ *  user_credits(user_id, credits_balance, credits_reset_at). */
+model UserCredits {
+  userId         String    @id @map("user_id")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creditsBalance Int       @default(0) @map("credits_balance")
+  creditsResetAt DateTime? @map("credits_reset_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("user_credits")
+}
+
+/** Renamed from the doc's straw-man `credit_transactions` — that table name
+ *  is already taken by the Green Impact CreditListing/CreditTransaction
+ *  marketplace above. This table is what the Python services' credits_db.py
+ *  ledger inserts target instead. */
+model AiCreditTransaction {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  service     String
+  referenceId String   @map("reference_id")
+  amount      Int
+  type        String // reserve | commit | refund | grant | purchase
+  balanceAfter Int?    @map("balance_after")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([service])
+  @@index([referenceId])
+  @@map("ai_credit_transactions")
 }

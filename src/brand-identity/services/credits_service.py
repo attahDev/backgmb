@@ -11,12 +11,13 @@ Reserve happens BEFORE the generation pipeline is queued.
 Commit happens in the worker on JobStatus.DONE.
 Refund happens in the worker on any failure path.
 
-Every operation writes a row to `credit_transactions` so all AI services
-share one audit trail.
+Every operation appends a row to `ai_credit_transactions` so all AI services
+share one audit trail. This is append-only, not a mutable-status row per
+reservation — reserve/commit/refund each write their own row.
 
-SCHEMA ASSUMPTION: built against
+SCHEMA: built against
   user_credits(user_id, credits_balance, credits_reset_at)
-  credit_transactions(id, user_id, service, amount, status, reference_id, created_at)
+  ai_credit_transactions(id, user_id, service, amount, type, reference_id, created_at)
 
 Reconcile against the real schema by editing this file and core/credits_db.py only.
 """
@@ -29,15 +30,28 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "brand_identity"
 
-# Plans that include Brand Identity at all (Founder Workspace and above).
-# Map these to the actual JWT `subscription_plan` values your main platform
-# encodes — reconcile against real token claims before go-live.
-ENTITLED_PLANS: set[str] = {
-    "founder_workspace",
-    "founder_pro",
-    "team",
-    "enterprise",
+TIER_RANK_SQL = text("""
+    SELECT tier FROM subscriptions WHERE user_id = :user_id
+""")
+
+# Matches the rank order of the SubscriptionTier enum in prisma/schema.prisma.
+# Values are the actual Postgres enum labels Prisma writes (EXPLORER, STUDENT,
+# ...), not the old founder_workspace/founder_pro placeholder strings —
+# nothing in the codebase ever produced those; they were dead vocabulary
+# invented before the real subscriptions table existed. Users with no row
+# yet default to EXPLORER (matches CreditsService.getOrCreateSubscription on
+# the NestJS side).
+TIER_RANK = {
+    "EXPLORER": 0,
+    "STUDENT": 1,
+    "PROFESSIONAL": 2,
+    "FOUNDER": 3,
+    "EXECUTIVE": 4,
+    "TEAM": 5,
+    "ENTERPRISE": 6,
 }
+
+MIN_TIER = "EXECUTIVE"
 
 
 class EntitlementError(Exception):
@@ -52,15 +66,20 @@ class CreditsDbError(Exception):
     """Raised when the credits DB operation itself fails."""
 
 
-def check_entitlement(subscription_plan: str) -> None:
+async def check_entitlement(db: AsyncSession, user_id: str) -> None:
     """
-    Static check — no DB call.
-    Raises EntitlementError if the plan doesn't include Brand Identity.
+    Gate 1 — is this user's real subscription tier at or above MIN_TIER?
+    One cheap read against the shared subscriptions table (same DB as the
+    credit ledger). Raises EntitlementError if not.
     """
-    if subscription_plan not in ENTITLED_PLANS:
+    result = await db.execute(TIER_RANK_SQL, {"user_id": user_id})
+    row = result.fetchone()
+    tier = row[0] if row else "EXPLORER"
+
+    if TIER_RANK.get(tier, 0) < TIER_RANK[MIN_TIER]:
         raise EntitlementError(
-            f"Your current plan ({subscription_plan!r}) does not include "
-            "Brand Identity. Please upgrade to Founder Workspace or above."
+            f"Your current plan ({tier}) does not include "
+            f"Brand Identity. Please upgrade to {MIN_TIER.title()} or above."
         )
 
 
@@ -99,10 +118,10 @@ async def reserve_credits(
         await db.execute(
             text(
                 """
-                INSERT INTO credit_transactions
-                    (id, user_id, service, amount, status, reference_id, created_at)
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
                 VALUES
-                    (:id, :user_id, :service, :amount, 'reserved', :ref, NOW())
+                    (:id, :user_id, :service, :amount, 'reserve', :ref, NOW())
                 """
             ),
             {
@@ -140,15 +159,18 @@ async def commit_credits(
         await db.execute(
             text(
                 """
-                UPDATE credit_transactions
-                SET status = 'committed'
-                WHERE reference_id = :ref
-                  AND user_id = :user_id
-                  AND service = :service
-                  AND status = 'reserved'
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES
+                    (:id, :user_id, :service, 0, 'commit', :ref, NOW())
                 """
             ),
-            {"ref": asset_id, "user_id": user_id, "service": SERVICE_NAME},
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "service": SERVICE_NAME,
+                "ref": asset_id,
+            },
         )
         await db.commit()
         logger.info("Credits committed: user=%s cost=%d asset=%s", user_id, cost, asset_id)
@@ -185,15 +207,19 @@ async def refund_credits(
         await db.execute(
             text(
                 """
-                UPDATE credit_transactions
-                SET status = 'refunded'
-                WHERE reference_id = :ref
-                  AND user_id = :user_id
-                  AND service = :service
-                  AND status = 'reserved'
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES
+                    (:id, :user_id, :service, :cost, 'refund', :ref, NOW())
                 """
             ),
-            {"ref": asset_id, "user_id": user_id, "service": SERVICE_NAME},
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "service": SERVICE_NAME,
+                "cost": cost,
+                "ref": asset_id,
+            },
         )
         await db.commit()
         logger.info("Credits refunded: user=%s cost=%d asset=%s", user_id, cost, asset_id)

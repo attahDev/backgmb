@@ -6,6 +6,8 @@ from sqlalchemy import update
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from core.database import AsyncSessionLocal
+from core.credits_db import credits_session
+from core.config import settings
 from core.redis import get_redis
 from models.asset import GeneratedAsset, JobStatus, AssetType
 from services.ai_service import ai_service
@@ -13,6 +15,7 @@ from services.document_service import document_service
 from services.logo_service import logo_service
 from services.templated_service import templated_service
 from services.upload_service import upload_service
+from services import credits_service
 from schemas.assets import (
     LogoInput, BusinessCardInput, LetterheadInput, EmailSignatureInput,
     InvoiceInput, QuotationInput, CompanyProfileInput,
@@ -65,6 +68,17 @@ async def process_job(payload: dict):
             await session.commit()
             logger.info("Job %s completed successfully", payload["job_id"])
 
+            try:
+                async with credits_session() as credits_db:
+                    await credits_service.commit_credits(
+                        credits_db, user_id, settings.BRAND_IDENTITY_CREDIT_COST, asset_id
+                    )
+            except Exception as credit_exc:
+                logger.error(
+                    "Failed to commit credits for completed job %s: %s",
+                    payload["job_id"], credit_exc,
+                )
+
         except Exception as exc:
             # Log the full exception server-side (includes traceback).
             logger.error("Job %s failed: %s", payload["job_id"], exc, exc_info=True)
@@ -85,6 +99,17 @@ async def process_job(payload: dict):
             except Exception as db_err:
                 logger.error(
                     "Failed to write FAILED status for %s: %s", asset_id, db_err
+                )
+
+            try:
+                async with credits_session() as credits_db:
+                    await credits_service.refund_credits(
+                        credits_db, user_id, settings.BRAND_IDENTITY_CREDIT_COST, asset_id
+                    )
+            except Exception as credit_exc:
+                logger.error(
+                    "CRITICAL: failed to refund credits for failed job %s: %s",
+                    payload["job_id"], credit_exc,
                 )
 
 

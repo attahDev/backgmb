@@ -2,8 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { BadgesService } from '../badges/badges.service';
+import { CreditsService } from '../../credits/credits.service';
 import { LogGreenActionDto } from './dto/log-action.dto';
-import { CreateClimateReportDto, UpdateClimateReportDto } from './dto/climate-report.dto';
+import {
+  CreateClimateReportDto,
+  UpdateClimateReportDto,
+} from './dto/climate-report.dto';
 import { ClimateDataService } from './climate-data.service';
 
 const BADGE_DEFINITIONS = [
@@ -39,6 +43,18 @@ const GREEN_CHAMPION_RANK_THRESHOLD = 25;
 // "Trees Planted" stat, since users log kg offset, not a tree count.
 const KG_CO2_PER_TREE_PER_YEAR = 21;
 
+// Eco-point → AI-credit exchange. Separate from the pre-existing
+// green-exchange (CreditListing/CreditTransaction) points marketplace —
+// this grants real AI-usage credits (ai_credit_transactions/UserCredits),
+// not Green Exchange wallet balance, and deliberately doesn't touch that
+// system's tables.
+const ECO_POINTS_TO_AI_CREDIT_RATE = 0.01; // 100kg logged = 1 credit
+// The per-entry 1000kg cap on LogGreenActionDto stops one fat-fingered
+// submission, but not repeated max-entry submissions farming credits over
+// many submissions in a month — this is a SEPARATE cap, specifically on
+// how much of a month's logged CO2 can be converted to AI credits.
+const ECO_CREDIT_MONTHLY_CAP_KG = 300; // -> 3 AI credits/month per user
+
 @Injectable()
 export class GreenImpactService {
   constructor(
@@ -46,6 +62,7 @@ export class GreenImpactService {
     private activityService: ActivityService,
     private climateData: ClimateDataService,
     private badgesService: BadgesService,
+    private creditsService: CreditsService,
   ) {}
 
   /** Point formula — documented in the schema comment on GreenAction too:
@@ -89,6 +106,99 @@ export class GreenImpactService {
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
+  }
+
+  /** Converts this calendar month's logged CO2 into AI credits, capped at
+   *  ECO_CREDIT_MONTHLY_CAP_KG worth regardless of how much was actually
+   *  logged. Safe to call repeatedly — each call only grants the
+   *  difference between what's eligible this month and what's already
+   *  been granted this month (read from the ledger itself, so there's no
+   *  separate redemption-tracking table to keep in sync). Returns 0 and
+   *  grants nothing once the monthly cap is exhausted, rather than
+   *  erroring — repeated exchange calls with nothing left to redeem yet
+   *  aren't a failure. */
+  async exchangeEcoPointsForAiCredits(userId: string) {
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+
+    const [loggedThisMonth, alreadyGranted] = await Promise.all([
+      this.prisma.greenAction.aggregate({
+        where: { userId, createdAt: { gte: startOfMonth } },
+        _sum: { co2OffsetKg: true },
+      }),
+      this.prisma.aiCreditTransaction.aggregate({
+        where: {
+          userId,
+          service: 'green_impact_exchange',
+          type: 'grant',
+          createdAt: { gte: startOfMonth },
+        },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const kgLoggedThisMonth = loggedThisMonth._sum.co2OffsetKg ?? 0;
+    const eligibleKg = Math.min(kgLoggedThisMonth, ECO_CREDIT_MONTHLY_CAP_KG);
+    const eligibleCredits =
+      Math.floor(eligibleKg * ECO_POINTS_TO_AI_CREDIT_RATE * 100) / 100;
+    const grantedSoFar = alreadyGranted._sum.amount ?? 0;
+    const creditsToGrant = Math.max(0, eligibleCredits - grantedSoFar);
+
+    if (creditsToGrant <= 0) {
+      return {
+        creditsGranted: 0,
+        monthlyCapKg: ECO_CREDIT_MONTHLY_CAP_KG,
+        kgLoggedThisMonth,
+      };
+    }
+
+    const newBalance = await this.creditsService.grant(
+      userId,
+      'green_impact_exchange',
+      creditsToGrant,
+    );
+
+    await this.activityService.log(
+      userId,
+      'GREEN_CREDITS_EXCHANGED',
+      `Converted eco-points into ${creditsToGrant} AI credit${creditsToGrant === 1 ? '' : 's'}`,
+      { creditsGranted: creditsToGrant },
+    );
+
+    return {
+      creditsGranted: creditsToGrant,
+      newBalance,
+      monthlyCapKg: ECO_CREDIT_MONTHLY_CAP_KG,
+      kgLoggedThisMonth,
+    };
+  }
+
+  /** CO2 Calculator — distinct from action logging itself; costs a credit
+   *  because it's a compute-backed estimate tool, not a self-reported log
+   *  entry. Actual entitlement/reserve/commit/refund happens at the
+   *  controller via CreditGuard; this just does the calculation. */
+  calculateCo2(inputs: {
+    transportKm?: number;
+    energyKwh?: number;
+    wasteKg?: number;
+  }) {
+    const transportFactor = 0.192; // kg CO2 per km, average passenger vehicle
+    const energyFactor = 0.233; // kg CO2 per kWh, UK grid average
+    const wasteFactor = 0.5; // kg CO2 per kg landfill waste
+
+    const transport = (inputs.transportKm ?? 0) * transportFactor;
+    const energy = (inputs.energyKwh ?? 0) * energyFactor;
+    const waste = (inputs.wasteKg ?? 0) * wasteFactor;
+
+    return {
+      estimatedCo2Kg: Math.round((transport + energy + waste) * 100) / 100,
+      breakdown: {
+        transport: Math.round(transport * 100) / 100,
+        energy: Math.round(energy * 100) / 100,
+        waste: Math.round(waste * 100) / 100,
+      },
+    };
   }
 
   /** Powers the Green Impact Profile panel and top stat cards — every
@@ -143,7 +253,10 @@ export class GreenImpactService {
    *  into memory — fine at current scale, revisit with a materialized
    *  leaderboard table if the user base gets large enough for this to be
    *  slow. */
-  private async computeRanking(userId: string, myPoints: number): Promise<number | null> {
+  private async computeRanking(
+    userId: string,
+    myPoints: number,
+  ): Promise<number | null> {
     if (myPoints === 0) return null;
 
     const totals = await this.prisma.greenAction.groupBy({
@@ -152,7 +265,9 @@ export class GreenImpactService {
     });
 
     const ahead = totals.filter(
-      (t) => t.userId !== userId && this.pointsFor(t._sum.co2OffsetKg ?? 0) > myPoints,
+      (t) =>
+        t.userId !== userId &&
+        this.pointsFor(t._sum.co2OffsetKg ?? 0) > myPoints,
     ).length;
 
     return ahead + 1;
@@ -208,7 +323,8 @@ export class GreenImpactService {
         points: myEntry?.points ?? 0,
       },
       greenChampionRankThreshold: GREEN_CHAMPION_RANK_THRESHOLD,
-      greenChampionUnlocked: myRank !== null && myRank <= GREEN_CHAMPION_RANK_THRESHOLD,
+      greenChampionUnlocked:
+        myRank !== null && myRank <= GREEN_CHAMPION_RANK_THRESHOLD,
     };
   }
 
@@ -282,15 +398,21 @@ export class GreenImpactService {
    *  users' real logged actions. Any provider that fails returns null for
    *  its own field instead of taking down the rest of the response. */
   async climateInsights() {
-    const [avgTemperatureRiseC, renewableEnergyPct, emissionsByMonth, offsetByMonth, byArea, treesPlanted] =
-      await Promise.all([
-        this.climateData.temperatureRiseC(),
-        this.climateData.renewableEnergyPct(),
-        this.climateData.emissionsByMonth(6),
-        this.offsetByMonth(6),
-        this.impactByArea(),
-        this.treesPlanted(),
-      ]);
+    const [
+      avgTemperatureRiseC,
+      renewableEnergyPct,
+      emissionsByMonth,
+      offsetByMonth,
+      byArea,
+      treesPlanted,
+    ] = await Promise.all([
+      this.climateData.temperatureRiseC(),
+      this.climateData.renewableEnergyPct(),
+      this.climateData.emissionsByMonth(6),
+      this.offsetByMonth(6),
+      this.impactByArea(),
+      this.treesPlanted(),
+    ]);
 
     const trend = emissionsByMonth.map((e, i) => ({
       month: e.month,

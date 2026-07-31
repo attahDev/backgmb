@@ -22,7 +22,7 @@ import { FellowshipAiModule } from './fellowship-ai/fellowship-ai.module';
 import { GreenAiModule } from './green-ai/green-ai.module';
 import { SearchModule } from './search/search.module';
 import { RealtimeModule } from './realtime/realtime.module';
-
+import { CreditsModule } from './credits/credits.module';
 
 @Module({
   imports: [
@@ -37,6 +37,7 @@ import { RealtimeModule } from './realtime/realtime.module';
       envFilePath: '.env',
     }),
     PrismaModule,
+    CreditsModule,
     AuthModule,
     UsersModule,
     MailModule,

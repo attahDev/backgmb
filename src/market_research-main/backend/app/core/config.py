@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     main_backend_url: str = "https://backgmb.onrender.com"
     internal_activity_secret: str = ""
 
+    # Points at the main GMBTE platform DB — user_credits + ai_credit_transactions
+    # live there, not in this service's own database_url.
+    credits_database_url: str = ""
+
     def get_cache_ttl(self, category: str) -> int:
         return {
             "crypto":    self.cache_ttl_crypto,
@@ -63,3 +67,21 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 SERVICE_NAME = "market_research"
+
+# Matches the rank order of the SubscriptionTier enum in prisma/schema.prisma
+# and request.state.plan_tier, which middleware.py now populates from the
+# real subscriptions table. Replaces the old founder_workspace/founder_pro
+# ENTITLED_PLANS set — nothing in the codebase ever produced those strings;
+# they were dead vocabulary invented before the real subscriptions table
+# existed.
+TIER_RANK = {
+    "EXPLORER": 0, "STUDENT": 1, "PROFESSIONAL": 2,
+    "FOUNDER": 3, "EXECUTIVE": 4, "TEAM": 5, "ENTERPRISE": 6,
+}
+MIN_TIER = "FOUNDER"
+
+# Cache-hit cost sits in the doc's stated 1-2 range, not yet pinned to one
+# exact number — using 2 as the conservative default. Fresh-fetch cost is
+# confirmed at 15 (updated from the old placeholder of 8).
+CREDIT_COST_CACHE = 2
+CREDIT_COST_FRESH = 15

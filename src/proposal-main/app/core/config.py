@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     MAIN_BACKEND_URL: str = "https://backgmb.onrender.com"
     INTERNAL_ACTIVITY_SECRET: str = ""
 
+    # Points at the main GMBTE platform DB — user_credits + ai_credit_transactions
+    # live there, not in this service's own DATABASE_URL.
+    CREDITS_DATABASE_URL: str = ""
+    PROPOSAL_CREDIT_COST: int = 20
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

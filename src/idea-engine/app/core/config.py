@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = ""
     TAVILY_API_KEY: str = ""
 
+    # Points at the main GMBTE platform DB — user_credits + ai_credit_transactions
+    # live there, not in this service's own DATABASE_URL.
+    CREDITS_DATABASE_URL: str = ""
+
+    # Reuses the same constant set as every other AI microservice's
+    # ENTITLED_PLANS rather than inventing a fifth naming convention.
+    ENTITLED_PLANS: set[str] = {"founder_workspace", "founder_pro", "team", "enterprise"}
+    IDEA_ENGINE_CREDIT_COST: int = 30
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

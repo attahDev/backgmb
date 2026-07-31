@@ -12,6 +12,18 @@ class Settings(BaseSettings):
     # This service's own Postgres DB (proposals/assets table only)
     DATABASE_URL: str
 
+    # Points at the main GMBTE platform DB — user_credits + ai_credit_transactions
+    # live there, not in this service's own DATABASE_URL.
+    CREDITS_DATABASE_URL: str = ""
+
+    # Mirrors the other AI microservices' bypass_rate_limits flag — every
+    # gate stays wired but inert until this flips to false at go-live.
+    BYPASS_RATE_LIMITS: bool = True
+
+    # Flat cost regardless of asset_type — the pricing doc gives one number
+    # for Brand Identity as a whole, not per asset type.
+    BRAND_IDENTITY_CREDIT_COST: int = 80
+
     REDIS_URL: str = "redis://redis:6379/0"
 
     JWT_SECRET: str

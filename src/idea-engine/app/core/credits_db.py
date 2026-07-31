@@ -1,4 +1,3 @@
-import logging
 import uuid
 from typing import Optional
 
@@ -7,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
-
 _credits_engine: Optional[AsyncEngine] = None
 _CreditsSessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
 
@@ -16,12 +13,12 @@ _CreditsSessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
 def get_credits_engine() -> AsyncEngine:
     global _credits_engine, _CreditsSessionLocal
     if _credits_engine is None:
-        if not settings.credits_database_url:
+        if not settings.CREDITS_DATABASE_URL:
             raise RuntimeError(
                 "CREDITS_DATABASE_URL is not set — cannot reach the main GMBTE DB"
             )
         _credits_engine = create_async_engine(
-            settings.credits_database_url,
+            settings.CREDITS_DATABASE_URL,
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=5,
@@ -33,15 +30,9 @@ def get_credits_engine() -> AsyncEngine:
 
 
 def _session_factory() -> async_sessionmaker[AsyncSession]:
-    get_credits_engine()  # ensures _CreditsSessionLocal is initialized
+    get_credits_engine()
     assert _CreditsSessionLocal is not None
     return _CreditsSessionLocal
-
-
-def get_credits_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Public accessor — for callers outside this module (e.g. middleware.py's
-    plan_tier lookup) that need a session but aren't doing reserve/commit/refund."""
-    return _session_factory()
 
 
 async def dispose_credits_engine() -> None:
@@ -50,6 +41,7 @@ async def dispose_credits_engine() -> None:
         await _credits_engine.dispose()
         _credits_engine = None
         _CreditsSessionLocal = None
+
 
 _RESERVE_SQL = text("""
     UPDATE user_credits
@@ -94,7 +86,7 @@ async def reserve_credits(user_id: str, amount: int, service: str, reference_id:
             "user_id": user_id,
             "service": service,
             "amount": amount,
-            "status": "reserved",
+            "status": "reserve",
             "reference_id": reference_id,
         })
         await session.commit()
@@ -108,8 +100,8 @@ async def commit_reservation(user_id: str, amount: int, service: str, reference_
             "id": str(uuid.uuid4()),
             "user_id": user_id,
             "service": service,
-            "amount": amount,
-            "status": "committed",
+            "amount": 0,
+            "status": "commit",
             "reference_id": reference_id,
         })
         await session.commit()
@@ -130,7 +122,7 @@ async def refund_reservation(user_id: str, amount: int, service: str, reference_
             "user_id": user_id,
             "service": service,
             "amount": amount,
-            "status": "refunded",
+            "status": "refund",
             "reference_id": reference_id,
         })
         await session.commit()

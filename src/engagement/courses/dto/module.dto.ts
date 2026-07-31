@@ -1,4 +1,15 @@
-import { IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 /** Free-form display metadata that used to be hardcoded in
@@ -43,6 +54,13 @@ export class CreateCourseDto {
   @IsOptional()
   @IsObject()
   metadata?: CourseMetadataDto;
+
+  /** 0 = free (default). Only set nonzero for a genuinely premium course —
+   *  enrollment charges this many credits once, up front. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  creditCost?: number;
 }
 
 export class UpdateCourseDto {
@@ -52,6 +70,7 @@ export class UpdateCourseDto {
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsBoolean() isFeatured?: boolean;
+  @IsOptional() @IsInt() @Min(0) creditCost?: number;
 }
 
 export class SectionMediaDto {
@@ -83,8 +102,21 @@ export class ModuleSectionDto {
    *  the section shape the UI already renders (LessonContent.tsx), it
    *  doesn't replace it. */
   @IsOptional()
-  @IsIn(['content', 'example', 'case-study', 'activity', 'summary', 'questions'])
-  type?: 'content' | 'example' | 'case-study' | 'activity' | 'summary' | 'questions';
+  @IsIn([
+    'content',
+    'example',
+    'case-study',
+    'activity',
+    'summary',
+    'questions',
+  ])
+  type?:
+    | 'content'
+    | 'example'
+    | 'case-study'
+    | 'activity'
+    | 'summary'
+    | 'questions';
 
   @IsOptional()
   @IsArray()

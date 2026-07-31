@@ -3,7 +3,13 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
 import { BadgesService } from '../badges/badges.service';
-import { CreateCourseDto, CreateModuleDto, UpdateCourseDto, UpdateModuleDto } from './dto/module.dto';
+import { CreditsService } from '../../credits/credits.service';
+import {
+  CreateCourseDto,
+  CreateModuleDto,
+  UpdateCourseDto,
+  UpdateModuleDto,
+} from './dto/module.dto';
 import { slugify } from './slugify';
 
 @Injectable()
@@ -12,6 +18,7 @@ export class CoursesService {
     private prisma: PrismaService,
     private activityService: ActivityService,
     private badgesService: BadgesService,
+    private creditsService: CreditsService,
   ) {}
 
   /** Course catalogue joined with the current user's own progress, if any.
@@ -19,10 +26,17 @@ export class CoursesService {
    *  Academy and Green Impact pages only ever see their own courses.
    *  includeInactive lets the admin course table show removed (isActive:
    *  false) courses too, so "remove" is reversible instead of a black hole. */
-  async findAllWithProgress(userId: string, category?: string, includeInactive = false) {
+  async findAllWithProgress(
+    userId: string,
+    category?: string,
+    includeInactive = false,
+  ) {
     const [courses, progress] = await Promise.all([
       this.prisma.course.findMany({
-        where: { ...(includeInactive ? {} : { isActive: true }), ...(category ? { category } : {}) },
+        where: {
+          ...(includeInactive ? {} : { isActive: true }),
+          ...(category ? { category } : {}),
+        },
         orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
       }),
       this.prisma.courseProgress.findMany({ where: { userId } }),
@@ -37,16 +51,25 @@ export class CoursesService {
         ...course,
         completedModules,
         isCompleted: p?.isCompleted ?? false,
+        // Without this, "never enrolled" and "enrolled, 0% done" both show
+        // completedModules: 0 / isCompleted: false — indistinguishable to
+        // the frontend gate that decides whether to show lesson content or
+        // a paywall.
+        isEnrolled: !!p,
         // totalModules can be 0 for a brand-new course with nothing uploaded
         // yet — guard against dividing by zero rather than showing NaN%.
         progressPercent:
-          course.totalModules > 0 ? Math.round((completedModules / course.totalModules) * 100) : 0,
+          course.totalModules > 0
+            ? Math.round((completedModules / course.totalModules) * 100)
+            : 0,
       };
     });
   }
 
   async findOne(courseId: string) {
-    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+    });
     if (!course) throw new NotFoundException('Course not found');
     return course;
   }
@@ -55,6 +78,27 @@ export class CoursesService {
     const course = await this.prisma.course.findUnique({ where: { slug } });
     if (!course) throw new NotFoundException('Course not found');
     return course;
+  }
+
+  /** Same lookup, plus isEnrolled — for the course detail page, which needs
+   *  to know whether to show the paywall or the lesson list. Kept separate
+   *  from findBySlug() above rather than adding a required userId there,
+   *  since findModulesBySlug/findModuleBySlug resolve courses by slug with
+   *  no user in scope at all. */
+  async findBySlugWithEnrollment(userId: string, slug: string) {
+    const course = await this.findBySlug(slug);
+    const progress = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId: course.id } },
+    });
+    return { ...course, isEnrolled: !!progress };
+  }
+
+  /** Frontend only ever has the slug (see coursesApi.ts's by-slug/* calls) —
+   *  this resolves it to an id and defers to the same enroll() above, so
+   *  there's one enrollment implementation, not two. */
+  async enrollBySlug(userId: string, courseSlug: string) {
+    const course = await this.findBySlug(courseSlug);
+    return this.enroll(userId, course.id);
   }
 
   /** Modules for a course, in display order — this is what the frontend
@@ -94,8 +138,29 @@ export class CoursesService {
     return { course, modules };
   }
 
-  async findModuleBySlug(courseSlug: string, lessonSlug: string, userId?: string) {
+  async findModuleBySlug(
+    courseSlug: string,
+    lessonSlug: string,
+    userId?: string,
+  ) {
     const course = await this.findBySlug(courseSlug);
+
+    let isEnrolled = true;
+    if (course.creditCost > 0) {
+      const progress = userId
+        ? await this.prisma.courseProgress.findUnique({
+            where: { userId_courseId: { userId, courseId: course.id } },
+          })
+        : null;
+      isEnrolled = !!progress;
+    }
+
+    // Paid course, no active enrollment — don't leak lesson content, hand
+    // the frontend just enough (creditCost) to render the paywall.
+    if (!isEnrolled) {
+      return { course: { ...course, isEnrolled: false }, locked: true };
+    }
+
     const module = await this.prisma.module.findUnique({
       where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
     });
@@ -108,7 +173,8 @@ export class CoursesService {
       : null;
 
     return {
-      course,
+      course: { ...course, isEnrolled: true },
+      locked: false,
       module: {
         ...module,
         completedSectionIds: progress?.completedSectionIds ?? [],
@@ -125,14 +191,21 @@ export class CoursesService {
    *  drift). Replaces the old PATCH /courses/:id/progress, which just
    *  trusted whatever completedModules number the client sent — turns out
    *  nothing in the frontend was even calling it. */
-  async toggleSection(userId: string, courseSlug: string, lessonSlug: string, sectionId: string) {
+  async toggleSection(
+    userId: string,
+    courseSlug: string,
+    lessonSlug: string,
+    sectionId: string,
+  ) {
     const course = await this.findBySlug(courseSlug);
     const module = await this.prisma.module.findUnique({
       where: { courseId_slug: { courseId: course.id, slug: lessonSlug } },
     });
     if (!module) throw new NotFoundException('Module not found');
 
-    const sections = ((module.content as any)?.sections ?? []) as Array<{ id: string }>;
+    const sections = (module.content?.sections ?? []) as Array<{
+      id: string;
+    }>;
     const sectionIds = sections.map((s) => s.id);
     if (!sectionIds.includes(sectionId)) {
       throw new NotFoundException('Section not found in this module');
@@ -150,7 +223,8 @@ export class CoursesService {
     }
 
     const completedSectionIds = Array.from(current);
-    const isCompleted = sectionIds.length > 0 && sectionIds.every((id) => current.has(id));
+    const isCompleted =
+      sectionIds.length > 0 && sectionIds.every((id) => current.has(id));
 
     // Was this the user's first touch on this course at all? Checked before
     // the upsert below creates the CourseProgress row, since after that it's
@@ -176,9 +250,14 @@ export class CoursesService {
     });
 
     if (!hadCourseProgress) {
-      await this.activityService.log(userId, 'COURSE_STARTED', `Started ${course.title}`, {
-        courseId: course.id,
-      });
+      await this.activityService.log(
+        userId,
+        'COURSE_STARTED',
+        `Started ${course.title}`,
+        {
+          courseId: course.id,
+        },
+      );
     }
 
     await this.recomputeCourseProgress(userId, course.id);
@@ -207,7 +286,8 @@ export class CoursesService {
     ]);
     if (!course) return;
 
-    const isCompleted = course.totalModules > 0 && completedModules >= course.totalModules;
+    const isCompleted =
+      course.totalModules > 0 && completedModules >= course.totalModules;
     const wasCompletedBefore = await this.prisma.courseProgress.findUnique({
       where: { userId_courseId: { userId, courseId } },
     });
@@ -219,13 +299,20 @@ export class CoursesService {
     });
 
     if (isCompleted && !wasCompletedBefore?.isCompleted) {
-      await this.activityService.log(userId, 'COURSE_COMPLETED', `Completed ${course.title}`, { courseId });
+      await this.activityService.log(
+        userId,
+        'COURSE_COMPLETED',
+        `Completed ${course.title}`,
+        { courseId },
+      );
       await this.badgesService.evaluate(userId, 'COURSES_COMPLETED');
     }
   }
 
   async countCompleted(userId: string) {
-    return this.prisma.courseProgress.count({ where: { userId, isCompleted: true } });
+    return this.prisma.courseProgress.count({
+      where: { userId, isCompleted: true },
+    });
   }
 
   // ───────────────────────── Admin: upload-driven content ─────────────────────────
@@ -244,6 +331,7 @@ export class CoursesService {
         isFeatured: dto.isFeatured ?? false,
         metadata: (dto.metadata as Prisma.InputJsonValue) ?? undefined,
         totalModules: 0,
+        creditCost: dto.creditCost ?? 0,
       },
     });
   }
@@ -254,12 +342,56 @@ export class CoursesService {
       where: { id: courseId },
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.metadata !== undefined ? { metadata: dto.metadata as Prisma.InputJsonValue } : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description }
+          : {}),
+        ...(dto.metadata !== undefined
+          ? { metadata: dto.metadata as Prisma.InputJsonValue }
+          : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
         ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
         ...(dto.isFeatured !== undefined ? { isFeatured: dto.isFeatured } : {}),
+        ...(dto.creditCost !== undefined ? { creditCost: dto.creditCost } : {}),
       },
+    });
+  }
+
+  /** Enrollment — pay once (if creditCost > 0), unlock the whole course.
+   *  Idempotent: re-calling this for a course the user is already enrolled
+   *  in just returns the existing CourseProgress row, never double-charges.
+   *  Debit is synchronous: reserve then commit back-to-back in this one
+   *  request (unlike the async AI-generation tools, there's no background
+   *  job here that could still fail after this returns) — if creating the
+   *  CourseProgress row fails after a successful reserve, the reservation
+   *  is refunded rather than left charged with nothing to show for it. */
+  async enroll(userId: string, courseId: string) {
+    const course = await this.findOne(courseId); // 404 if course doesn't exist
+
+    const existing = await this.prisma.courseProgress.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+    if (existing) return existing;
+
+    if (course.creditCost > 0) {
+      const reservation = await this.creditsService.reserve(
+        userId,
+        'academy_course',
+        course.creditCost,
+      );
+      try {
+        const progress = await this.prisma.courseProgress.create({
+          data: { userId, courseId, completedModules: 0, isCompleted: false },
+        });
+        await this.creditsService.commit(reservation);
+        return progress;
+      } catch (e) {
+        await this.creditsService.refund(reservation);
+        throw e;
+      }
+    }
+
+    return this.prisma.courseProgress.create({
+      data: { userId, courseId, completedModules: 0, isCompleted: false },
     });
   }
 
@@ -290,7 +422,9 @@ export class CoursesService {
   }
 
   async updateModule(courseId: string, moduleId: string, dto: UpdateModuleDto) {
-    const existing = await this.prisma.module.findFirst({ where: { id: moduleId, courseId } });
+    const existing = await this.prisma.module.findFirst({
+      where: { id: moduleId, courseId },
+    });
     if (!existing) throw new NotFoundException('Module not found');
 
     const data: Record<string, any> = {};
@@ -305,7 +439,9 @@ export class CoursesService {
   }
 
   async removeModule(courseId: string, moduleId: string) {
-    const existing = await this.prisma.module.findFirst({ where: { id: moduleId, courseId } });
+    const existing = await this.prisma.module.findFirst({
+      where: { id: moduleId, courseId },
+    });
     if (!existing) throw new NotFoundException('Module not found');
 
     await this.prisma.$transaction(async (tx) => {
@@ -324,14 +460,20 @@ export class CoursesService {
     let candidate = base;
     let i = 1;
     // Small catalogues (dozens of courses) — a loop is simpler and fine here.
-    while (await this.prisma.course.findUnique({ where: { slug: candidate } })) {
+    while (
+      await this.prisma.course.findUnique({ where: { slug: candidate } })
+    ) {
       i += 1;
       candidate = `${base}-${i}`;
     }
     return candidate;
   }
 
-  private async uniqueModuleSlug(courseId: string, title: string, excludeModuleId?: string): Promise<string> {
+  private async uniqueModuleSlug(
+    courseId: string,
+    title: string,
+    excludeModuleId?: string,
+  ): Promise<string> {
     const base = slugify(title) || 'module';
     let candidate = base;
     let i = 1;

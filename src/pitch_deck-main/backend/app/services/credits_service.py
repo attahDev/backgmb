@@ -13,13 +13,25 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = "pitch_deck"
 
 
-def check_entitlement(plan: str) -> None:
-    if plan not in settings.ENTITLED_PLANS:
+TIER_RANK = {
+    "EXPLORER": 0, "STUDENT": 1, "PROFESSIONAL": 2,
+    "FOUNDER": 3, "EXECUTIVE": 4, "TEAM": 5, "ENTERPRISE": 6,
+}
+
+
+def check_entitlement(credits_db: Session, user_id: str) -> None:
+    row = credits_db.execute(
+        text("SELECT tier FROM subscriptions WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    ).fetchone()
+    tier = row[0] if row else "EXPLORER"
+
+    if TIER_RANK.get(tier, 0) < TIER_RANK[settings.MIN_TIER]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Pitch AI is available on Founder Workspace and above. "
-                "Upgrade your plan to generate pitch decks."
+                f"Pitch AI requires {settings.MIN_TIER.title()} tier or above "
+                f"(current: {tier}). Upgrade your plan to generate pitch decks."
             ),
         )
 
@@ -51,9 +63,9 @@ def reserve_credits(credits_db: Session, user_id: str) -> str:
         credits_db.execute(
             text(
                 """
-                INSERT INTO credit_transactions
-                    (id, user_id, service, amount, status, reference_id, created_at)
-                VALUES (:id, :user_id, :service, :amount, 'reserved', :reference_id, now())
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES (:id, :user_id, :service, :amount, 'reserve', :reference_id, now())
                 """
             ),
             {
@@ -84,12 +96,17 @@ def commit_credits(credits_db: Session, user_id: str, reference_id: str) -> None
         credits_db.execute(
             text(
                 """
-                UPDATE credit_transactions
-                SET status = 'committed'
-                WHERE reference_id = :reference_id AND user_id = :user_id
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES (:id, :user_id, :service, 0, 'commit', :reference_id, now())
                 """
             ),
-            {"reference_id": reference_id, "user_id": user_id},
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "service": SERVICE_NAME,
+                "reference_id": reference_id,
+            },
         )
         credits_db.commit()
     except Exception as exc:
@@ -116,12 +133,18 @@ def refund_credits(credits_db: Session, user_id: str, reference_id: str) -> None
         credits_db.execute(
             text(
                 """
-                UPDATE credit_transactions
-                SET status = 'refunded'
-                WHERE reference_id = :reference_id AND user_id = :user_id
+                INSERT INTO ai_credit_transactions
+                    (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES (:id, :user_id, :service, :cost, 'refund', :reference_id, now())
                 """
             ),
-            {"reference_id": reference_id, "user_id": user_id},
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "service": SERVICE_NAME,
+                "cost": cost,
+                "reference_id": reference_id,
+            },
         )
         credits_db.commit()
     except Exception as exc:

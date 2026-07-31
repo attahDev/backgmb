@@ -11,11 +11,27 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "proposal_builder"
-ENTITLED_PLANS: set[str] = {"founder_workspace", "founder_pro", "pro", "team", "enterprise"}
+
+TIER_RANK = {
+    "EXPLORER": 0, "STUDENT": 1, "PROFESSIONAL": 2,
+    "FOUNDER": 3, "EXECUTIVE": 4, "TEAM": 5, "ENTERPRISE": 6,
+}
+MIN_TIER = "FOUNDER"
 
 
-def is_entitled(plan: str) -> bool:
-    return plan in ENTITLED_PLANS
+async def is_entitled(db: AsyncSession, user_id: str) -> bool:
+    """Real subscriptions-table lookup — replaces the old ENTITLED_PLANS
+    string-membership check against founder_workspace/founder_pro, which
+    nothing in the codebase ever actually produced. `db` here should be a
+    credits-DB session (get_credits_db), same connection as reserve/commit/
+    refund below."""
+    result = await db.execute(
+        text("SELECT tier FROM subscriptions WHERE user_id = :user_id"),
+        {"user_id": user_id},
+    )
+    row = result.first()
+    tier = row[0] if row else "EXPLORER"
+    return TIER_RANK.get(tier, 0) >= TIER_RANK[MIN_TIER]
 
 
 class InsufficientCredits(Exception):
@@ -42,8 +58,8 @@ async def reserve_credits(db: AsyncSession, user_id: str, cost: int) -> str:
     await db.execute(
         text(
             """
-            INSERT INTO credit_transactions (id, user_id, service, amount, status, reference_id, created_at)
-            VALUES (:id, :user_id, :service, :amount, 'reserved', :reference_id, now())
+            INSERT INTO ai_credit_transactions (id, user_id, service, amount, type, reference_id, created_at)
+            VALUES (:id, :user_id, :service, :amount, 'reserve', :reference_id, now())
             """
         ),
         {
@@ -58,10 +74,15 @@ async def reserve_credits(db: AsyncSession, user_id: str, cost: int) -> str:
     return txn_id
 
 
-async def commit_credits(db: AsyncSession, txn_id: str) -> None:
+async def commit_credits(db: AsyncSession, user_id: str, txn_id: str) -> None:
     await db.execute(
-        text("UPDATE credit_transactions SET status = 'committed' WHERE id = :id"),
-        {"id": txn_id},
+        text(
+            """
+            INSERT INTO ai_credit_transactions (id, user_id, service, amount, type, reference_id, created_at)
+            VALUES (:id, :user_id, :service, 0, 'commit', :reference_id, now())
+            """
+        ),
+        {"id": str(uuid.uuid4()), "user_id": user_id, "service": SERVICE_NAME, "reference_id": txn_id},
     )
     await db.commit()
 
@@ -77,8 +98,8 @@ async def refund_credits(db: AsyncSession, user_id: str, cost: int, txn_id: str)
         await db.execute(
             text(
                 """
-                INSERT INTO credit_transactions (id, user_id, service, amount, status, reference_id, created_at)
-                VALUES (:id, :user_id, :service, :amount, 'refunded', :reference_id, now())
+                INSERT INTO ai_credit_transactions (id, user_id, service, amount, type, reference_id, created_at)
+                VALUES (:id, :user_id, :service, :amount, 'refund', :reference_id, now())
                 """
             ),
             {

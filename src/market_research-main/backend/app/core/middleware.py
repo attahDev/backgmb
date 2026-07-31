@@ -5,12 +5,42 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from jose import jwt, JWTError
+from sqlalchemy import text
 
+from app.core import credits_db
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = {"active", "trialing"}
+
+# Matches the rank order of the SubscriptionTier enum in prisma/schema.prisma.
+TIER_RANK = {
+    "EXPLORER": 0, "STUDENT": 1, "PROFESSIONAL": 2,
+    "FOUNDER": 3, "EXECUTIVE": 4, "TEAM": 5, "ENTERPRISE": 6,
+}
+
+_TIER_SQL = text("SELECT tier FROM subscriptions WHERE user_id = :user_id")
+
+
+async def _lookup_plan_tier(user_id: str) -> str:
+    """
+    Reads the real tier from the shared subscriptions table (same DB as the
+    credit ledger) rather than trusting an unminted JWT claim or hardcoding
+    a value — every production request previously got plan_tier="explorer"
+    unconditionally here, regardless of the user's actual subscription.
+    Fails to EXPLORER on any DB error (fail-closed for entitlement — better
+    to under-grant access than over-grant it).
+    """
+    try:
+        Session = credits_db.get_credits_session_factory()
+        async with Session() as session:
+            result = await session.execute(_TIER_SQL, {"user_id": user_id})
+            row = result.first()
+            return row[0] if row else "EXPLORER"
+    except Exception as e:
+        logger.error(f"plan_tier lookup failed for user={user_id}, defaulting to EXPLORER: {e}")
+        return "EXPLORER"
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -41,7 +71,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in self.PUBLIC_PATHS:
             return await call_next(request)
 
-        # Development bypass
+        # Development bypass — X-Plan-Tier header lets local testing pick a
+        # tier directly without a real subscriptions row. Production always
+        # uses the real lookup below, never a header.
         if settings.app_env == "development":
             request.state.user_id = request.headers.get(
                 "X-User-ID",
@@ -49,7 +81,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
             request.state.plan_tier = request.headers.get(
                 "X-Plan-Tier",
-                "founder_pro"
+                "FOUNDER"
             )
             request.state.subscription_status = "active"
 
@@ -101,7 +133,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         request.state.user_id = user_id
-        request.state.plan_tier = "explorer"
+        request.state.plan_tier = await _lookup_plan_tier(user_id)
         request.state.subscription_status = "active"
 
         return await call_next(request)

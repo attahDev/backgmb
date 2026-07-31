@@ -17,6 +17,8 @@ from app.workers.deck_worker import process_deck_job, get_job_status
 from app.services.pptx_service import build_pptx, THEME_PREVIEWS
 from app.services.image_service import download_image_from_url
 from app.services.rate_limiter import check_rate_limit
+from app.services import credits_service
+from app.core.credits_db import get_credits_db
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -37,9 +39,14 @@ def generate_deck(
     request: GenerateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    credits_db: Session = Depends(get_credits_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     check_rate_limit(current_user.user_id)
+
+    # ── Gate 1: entitlement — real subscriptions-table lookup, not the JWT's
+    #    unminted "plan" claim ─────────────────────────────────────────────
+    credits_service.check_entitlement(credits_db, current_user.user_id)
 
     validator = INPUT_VALIDATORS.get(request.input_type)
     if not validator:
@@ -49,6 +56,10 @@ def generate_deck(
         validated_data = validator(**request.data)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid input data: {e}")
+
+    # ── Gate 2: reserve credits before queuing the job. Commit/refund
+    #    happen in the worker at the actual success/failure point. ────────
+    reference_id = credits_service.reserve_credits(credits_db, current_user.user_id)
 
     deck = PitchDeck(
         user_id=current_user.user_id,
@@ -71,6 +82,7 @@ def generate_deck(
         input_type=request.input_type.value,
         data=validated_data.model_dump(),
         db=db,
+        reference_id=reference_id,
         theme=request.theme.value,
     )
 

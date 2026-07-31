@@ -1,10 +1,12 @@
 import logging
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import credits_service
 from app.core.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.idea import Idea
@@ -28,13 +30,30 @@ async def generate_idea(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Gate 1 — entitlement (Founder tier and above), no DB call.
+    if not credits_service.is_entitled(user.get("subscription_plan", "")):
+        raise HTTPException(status_code=403, detail="Idea Engine requires Founder tier or above")
+
+    # Gate 2 — reserve credits before doing any generation work. Fails
+    # closed: a credit-DB error blocks the request rather than granting a
+    # free run.
+    reference_id = str(uuid.uuid4())
+    reservation = await credits_service.reserve(user["user_id"], reference_id)
+    if reservation["status"] == "insufficient":
+        raise HTTPException(status_code=402, detail="Insufficient credits")
+    if reservation["status"] == "error":
+        raise HTTPException(status_code=503, detail="Credits service unavailable")
+
     try:
         content = await generate_idea_content(body)
     except ConnectionError as e:
+        await credits_service.refund(user["user_id"], reference_id)
         raise HTTPException(status_code=502, detail=str(e))
     except ValueError as e:
+        await credits_service.refund(user["user_id"], reference_id)
         raise HTTPException(status_code=502, detail=str(e))
     except Exception:
+        await credits_service.refund(user["user_id"], reference_id)
         logger.exception("Unexpected error generating idea")
         raise HTTPException(status_code=500, detail="Failed to generate idea")
 
@@ -53,6 +72,9 @@ async def generate_idea(
     db.add(idea)
     await db.commit()
     await db.refresh(idea)
+
+    # Generation + persistence both succeeded — mark the reservation consumed.
+    await credits_service.commit(user["user_id"], reference_id)
 
     return IdeaResponse(
         id=idea.id,
