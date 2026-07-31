@@ -4,6 +4,8 @@ import { ActivityService } from '../activity/activity.service';
 import { BadgesService } from '../badges/badges.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadsService } from '../../uploads/uploads.service';
+import { EventbriteService } from './eventbrite.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -24,6 +26,8 @@ export class EventsService {
     private notificationsService: NotificationsService,
     private uploadsService: UploadsService,
     private badgesService: BadgesService,
+    private eventbriteService: EventbriteService,
+    private realtime: RealtimeGateway,
   ) {}
 
   async findUpcoming(includeInactive = false, search?: string) {
@@ -187,33 +191,121 @@ export class EventsService {
     return event;
   }
 
-  /** Admin's "who's expected" list for an event — everyone who's RSVP'd
-   *  (REGISTERED) through GMBTE, whether the event links out to Eventbrite
-   *  or not. This is GMBTE's own attendance record, independent of
-   *  whatever Eventbrite's own dashboard shows. */
+  /** Admin's "who's expected" list for an event — everyone who's RSVP'd OR
+   *  saved it through GMBTE, plus (if the event is linked to Eventbrite)
+   *  Eventbrite's own confirmed count. Both RSVP and Saved count toward
+   *  the attendee total now — a save is still someone counting themselves
+   *  in, just without committing to the calendar slot yet. Same structure
+   *  for admin-created and member-submitted (community) events; nothing
+   *  here branches on source. */
   async findAttendees(eventId: string) {
     const event = await this.prisma.event.findUnique({ where: { id: eventId } });
     if (!event) throw new NotFoundException('Event not found');
 
-    const attendees = await this.prisma.eventAttendance.findMany({
-      where: { eventId, status: ATTENDANCE_STATUS.REGISTERED },
+    const attendance = await this.prisma.eventAttendance.findMany({
+      where: { eventId, status: { in: [ATTENDANCE_STATUS.REGISTERED, ATTENDANCE_STATUS.SAVED] } },
       orderBy: { createdAt: 'asc' },
       include: {
         user: { select: { id: true, firstname: true, lastname: true, email: true } },
       },
     });
 
+    const gmbteCount = attendance.length;
+    const eventbriteCount = event.eventbriteEventId ? event.eventbriteAttendeeCount ?? 0 : null;
+
     return {
       eventId,
       eventTitle: event.title,
-      count: attendees.length,
-      attendees: attendees.map((a) => ({
+      // Kept for backwards compatibility with the existing admin UI —
+      // now the combined total rather than RSVP-only.
+      count: gmbteCount + (eventbriteCount ?? 0),
+      gmbteCount,
+      eventbriteEventId: event.eventbriteEventId,
+      eventbriteCount,
+      eventbriteSyncedAt: event.eventbriteSyncedAt,
+      attendees: attendance.map((a) => ({
         userId: a.user.id,
         name: `${a.user.firstname} ${a.user.lastname}`,
         email: a.user.email,
+        status: a.status,
+        viaEventbrite: a.viaEventbrite,
         registeredAt: a.createdAt,
       })),
     };
+  }
+
+  /** Admin-triggered "Sync now" — pulls a fresh confirmed-attendee count
+   *  from Eventbrite for a linked event and caches it on the row. Returns
+   *  the event unchanged (with a null count) if it isn't Eventbrite-linked
+   *  or if Eventbrite has no accessible data for it (see EventbriteService
+   *  for why that's expected for some partner events, not a bug). */
+  async syncEventbriteAttendees(eventId: string) {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Event not found');
+    if (!event.eventbriteEventId) {
+      throw new ForbiddenException('This event has no linked Eventbrite event');
+    }
+
+    const count = await this.eventbriteService.getAttendeeCount(event.eventbriteEventId);
+    const updated = await this.prisma.event.update({
+      where: { id: eventId },
+      data: { eventbriteAttendeeCount: count, eventbriteSyncedAt: new Date() },
+    });
+
+    this.realtime.broadcast('events:updated', { eventId });
+    return updated;
+  }
+
+  /** Called from the webhook controller when Eventbrite reports a
+   *  completed order on an event GMBTE has linked (see EventbriteService
+   *  .resolveOrderWebhook for the payload shape). For each attendee on the
+   *  order whose email matches a GMBTE account, upserts a REGISTERED
+   *  EventAttendance row tagged viaEventbrite — so someone who checks out
+   *  through the embedded Eventbrite widget shows up in GMBTE's own
+   *  attendee list without ever clicking GMBTE's RSVP button. Attendees
+   *  with no matching GMBTE account are skipped: there's nowhere to
+   *  attach the row without a userId, and their ticket is still reflected
+   *  in the cached eventbriteAttendeeCount from the next "Sync now". */
+  async handleEventbriteWebhook(payload: { api_url?: string }) {
+    const resolved = await this.eventbriteService.resolveOrderWebhook(payload);
+    if (!resolved) return { processed: 0 };
+
+    const event = await this.prisma.event.findFirst({
+      where: { eventbriteEventId: resolved.eventbriteEventId },
+    });
+    if (!event) return { processed: 0 };
+
+    let processed = 0;
+    for (const attendee of resolved.attendees) {
+      const user = await this.prisma.user.findFirst({
+        where: { email: { equals: attendee.email, mode: 'insensitive' } },
+      });
+      if (!user) continue;
+
+      await this.prisma.eventAttendance.upsert({
+        where: { userId_eventId: { userId: user.id, eventId: event.id } },
+        create: {
+          userId: user.id,
+          eventId: event.id,
+          status: ATTENDANCE_STATUS.REGISTERED,
+          viaEventbrite: true,
+          eventbriteAttendeeId: attendee.attendeeId,
+        },
+        update: {
+          status: ATTENDANCE_STATUS.REGISTERED,
+          viaEventbrite: true,
+          eventbriteAttendeeId: attendee.attendeeId,
+        },
+      });
+      await this.activityService.log(user.id, 'EVENT_RSVP', `Registered for ${event.title}`, {
+        eventId: event.id,
+      });
+      await this.badgesService.evaluate(user.id, 'EVENTS_ATTENDED');
+      processed += 1;
+    }
+
+    this.realtime.broadcast('events:updated', { eventId: event.id });
+    return { processed };
   }
 
   // ───────────────────────── Admin: event management ─────────────────────────
@@ -225,7 +317,17 @@ export class EventsService {
       imageUrl = uploaded.url;
     }
 
-    return this.prisma.event.create({
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : undefined;
+
+    // Linking an existing partner Eventbrite event takes priority over
+    // publishToEventbrite — an admin shouldn't end up with both a pasted
+    // partner link AND a brand-new GMBTE-owned Eventbrite listing.
+    const linkedEventbriteId = dto.eventbriteUrl
+      ? this.eventbriteService.extractEventId(dto.eventbriteUrl)
+      : null;
+
+    const event = await this.prisma.event.create({
       data: {
         title: dto.title,
         description: dto.description,
@@ -234,14 +336,37 @@ export class EventsService {
         mode: dto.mode,
         link: dto.link,
         tags: dto.tags ?? [],
-        startsAt: new Date(dto.startsAt),
-        endsAt: dto.endsAt ? new Date(dto.endsAt) : undefined,
+        startsAt,
+        endsAt,
         isActive: dto.isActive ?? true,
         isFeatured: dto.isFeatured ?? false,
         source: EventSource.ADMIN,
         reviewStatus: PostStatus.APPROVED,
+        eventbriteEventId: linkedEventbriteId ?? undefined,
       },
     });
+
+    if (!linkedEventbriteId && dto.publishToEventbrite) {
+      const published = await this.eventbriteService.createEventOnEventbrite({
+        title: dto.title,
+        description: dto.description,
+        startsAt,
+        endsAt,
+        location: dto.location,
+        mode: dto.mode,
+      });
+      if (published) {
+        return this.prisma.event.update({
+          where: { id: event.id },
+          data: {
+            eventbriteEventId: published.id,
+            link: event.link ?? published.url,
+          },
+        });
+      }
+    }
+
+    return event;
   }
 
   // ───────────────────────── Member: community event submissions ─────────────────────────
@@ -271,6 +396,9 @@ export class EventsService {
         source: EventSource.USER,
         reviewStatus: PostStatus.PENDING,
         createdById: userId,
+        eventbriteEventId: dto.eventbriteUrl
+          ? this.eventbriteService.extractEventId(dto.eventbriteUrl) ?? undefined
+          : undefined,
       },
     });
 
@@ -360,6 +488,11 @@ export class EventsService {
         ...(dto.imageUrl !== undefined && { imageUrl: dto.imageUrl }),
         ...(dto.mode !== undefined && { mode: dto.mode }),
         ...(dto.link !== undefined && { link: dto.link }),
+        ...(dto.eventbriteUrl !== undefined && {
+          eventbriteEventId: dto.eventbriteUrl
+            ? this.eventbriteService.extractEventId(dto.eventbriteUrl) ?? undefined
+            : null,
+        }),
         ...(dto.startsAt !== undefined && { startsAt: new Date(dto.startsAt) }),
         ...(dto.endsAt !== undefined && { endsAt: new Date(dto.endsAt) }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),

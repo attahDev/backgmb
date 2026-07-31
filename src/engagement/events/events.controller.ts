@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -26,7 +27,10 @@ import { CreateCommunityEventDto } from './dto/create-community-event.dto';
 
 @Controller('events')
 export class EventsController {
-  constructor(private eventsService: EventsService) {}
+  constructor(
+    private eventsService: EventsService,
+    private config: ConfigService,
+  ) {}
 
   /** Public — the marketing site's Events page calls this unauthenticated. */
   @Get()
@@ -89,6 +93,32 @@ export class EventsController {
     return this.eventsService.findAttendees(id);
   }
 
+  /** Admin's "Sync now" button on the attendees modal — pulls a fresh
+   *  confirmed-attendee count from Eventbrite for a linked event. */
+  @Post('admin/:id/eventbrite/sync')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  syncEventbriteAttendees(@Param('id') id: string) {
+    return this.eventsService.syncEventbriteAttendees(id);
+  }
+
+  /** Eventbrite's webhook callback — fires when someone completes checkout
+   *  on the embedded Eventbrite widget for a linked event ("order.placed").
+   *  Deliberately unauthenticated (Eventbrite can't send a JWT), so the
+   *  secret path segment is what stands in for auth here — configure the
+   *  same value as EVENTBRITE_WEBHOOK_SECRET both here and in Eventbrite's
+   *  webhook settings for this endpoint's full URL. Always 200s (even on a
+   *  wrong secret or unresolvable payload) since Eventbrite retries
+   *  aggressively on non-2xx and there's nothing actionable to retry here. */
+  @Post('webhooks/eventbrite/:secret')
+  async eventbriteWebhook(@Param('secret') secret: string, @Body() payload: { api_url?: string }) {
+    const expected = this.config.get<string>('EVENTBRITE_WEBHOOK_SECRET');
+    if (!expected || secret !== expected) {
+      return { ok: true };
+    }
+    return this.eventsService.handleEventbriteWebhook(payload);
+  }
+
   /** "Host an Event" — any authenticated member can submit one. No
    *  RolesGuard: this is deliberately open to everyone, unlike admin
    *  createEvent() below. Multipart: same fields as CreateCommunityEventDto
@@ -106,6 +136,7 @@ export class EventsController {
     @Body('location') location: string,
     @Body('mode') mode: string,
     @Body('link') link: string,
+    @Body('eventbriteUrl') eventbriteUrl: string,
     @Body('startsAt') startsAt: string,
     @Body('endsAt') endsAt: string,
     @Body('tags') tagsText: string,
@@ -121,6 +152,7 @@ export class EventsController {
       location: location || undefined,
       mode: mode || undefined,
       link: link || undefined,
+      eventbriteUrl: eventbriteUrl || undefined,
       startsAt,
       endsAt: endsAt || undefined,
       tags: tagsText
@@ -192,6 +224,8 @@ export class EventsController {
       imageUrl: body.imageUrl || undefined,
       mode: body.mode || undefined,
       link: body.link || undefined,
+      eventbriteUrl: body.eventbriteUrl || undefined,
+      publishToEventbrite: parseBoolean(body.publishToEventbrite, false),
       startsAt: body.startsAt,
       endsAt: body.endsAt || undefined,
       isActive: parseBoolean(body.isActive, true),

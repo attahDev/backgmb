@@ -726,6 +726,22 @@ model Event {
   // etc. Purely optional so events with no online component (walk-in
   // workshops) don't need one.
   link        String?
+
+  // ── Eventbrite linkage (optional) ──
+  // Set either by an admin pasting an existing partner-hosted Eventbrite
+  // event's URL/ID (extracted server-side, see EventbriteService), or
+  // automatically after createEventOnEventbrite() publishes a brand-new
+  // event under GMBTE's own Eventbrite organizer account. A plain GMBTE
+  // event (no partner, not dual-listed) leaves this null — the Eventbrite
+  // fields never show up in the admin/member UI for those.
+  eventbriteEventId     String?
+  // Cached from the last sync (webhook or manual "Sync now") rather than
+  // fetched live on every request — Eventbrite's attendee-count endpoint
+  // requires the organizer's private token and isn't always available for
+  // partner events, so this can legitimately stay null.
+  eventbriteAttendeeCount Int?
+  eventbriteSyncedAt      DateTime?
+
   startsAt    DateTime
   endsAt      DateTime?
   isActive    Boolean   @default(true)
@@ -800,6 +816,16 @@ model EventAttendance {
   event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   status String @default("REGISTERED")
+
+  // True when this row was created automatically from an Eventbrite
+  // "order placed" webhook (someone completed the embedded Eventbrite
+  // checkout) rather than a native GMBTE RSVP click. Lets the admin
+  // attendee list show where each registration actually came from.
+  viaEventbrite         Boolean @default(false)
+  // Eventbrite's own attendee ID — used to dedupe webhook deliveries
+  // (Eventbrite retries on failure) and to match a webhook back to this
+  // row on repeat sync.
+  eventbriteAttendeeId  String? @unique
 
   createdAt DateTime @default(now())
 

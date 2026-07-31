@@ -27,6 +27,7 @@ import { CoursesController } from './courses/courses.controller';
 
 import { EventsService } from './events/events.service';
 import { EventsController } from './events/events.controller';
+import { EventbriteService } from './events/eventbrite.service';
 
 import { CommunityService } from './community/community.service';
 import { CommunityController } from './community/community.controller';
@@ -112,6 +113,7 @@ import { BadgesController } from './badges/badges.controller';
     PdfExtractionService,
 
     EventsService,
+    EventbriteService,
 
     CommunityService,
     CommunityCleanupService,
