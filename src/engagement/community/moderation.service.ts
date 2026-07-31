@@ -5,12 +5,12 @@ import { Injectable, Logger } from '@nestjs/common';
 // current general-purpose stand-in.
 const GROQ_MODEL = process.env.GROQ_MODERATION_MODEL || 'openai/gpt-oss-120b';
 
-const MODERATION_SYSTEM_PROMPT = `You are a content moderator for a youth-focused professional community platform. Given a piece of user-submitted text (a post or a comment), decide whether it contains any of: hate speech or harassment, sexual content, graphic violence, spam/scams, or doxxing/personal contact info shared without consent. Respond with ONLY valid JSON, no markdown fences, matching exactly:
+const MODERATION_SYSTEM_PROMPT = `You are a content moderator for a youth-focused professional community platform. Given a piece of user-submitted text (a post or a comment), decide whether it contains any of: hate speech or harassment, sexual content, graphic violence, spam/scams, doxxing/personal contact info shared without consent, or profanity/vulgar or crude language (swear words, curse words — flag these even without any other violation present). Respond with ONLY valid JSON, no markdown fences, matching exactly:
 {
   "flagged": boolean,
   "reason": string (one short sentence explaining why, empty string if not flagged)
 }
-Be conservative — normal community shoutouts, career updates, and constructive criticism are NOT flagged. Only flag genuine violations.`;
+Be conservative about everything except profanity — normal community shoutouts, career updates, and constructive criticism are NOT flagged. But any swearing or crude language, even mild and even with no other issue, should be flagged.`;
 
 export type ModerationResult = {
   flagged: boolean;
