@@ -203,7 +203,8 @@ export class CoursesService {
     });
     if (!module) throw new NotFoundException('Module not found');
 
-    const sections = (module.content?.sections ?? []) as Array<{
+    const sections = ((module.content as unknown as { sections?: Array<{ id: string }> })
+      ?.sections ?? []) as Array<{
       id: string;
     }>;
     const sectionIds = sections.map((s) => s.id);
