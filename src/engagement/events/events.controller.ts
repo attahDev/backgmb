@@ -24,6 +24,7 @@ import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CreateCommunityEventDto } from './dto/create-community-event.dto';
+import { UpdateCommunityEventDto } from './dto/update-community-event.dto';
 
 @Controller('events')
 export class EventsController {
@@ -72,6 +73,46 @@ export class EventsController {
   @UseGuards(JwtAuthGuard)
   findMySubmissions(@CurrentUser() user: any) {
     return this.eventsService.findMySubmissions(user.userId);
+  }
+
+  /** "My Events" → Hosting → Edit. Ownership is enforced in
+   *  EventsService.updateMySubmission, not here — the guard only proves
+   *  who's calling, not which event they're allowed to touch. Editing
+   *  resets the event back to PENDING review; see the service method for
+   *  why. Multipart, same shape as submitCommunityEvent below, so a new
+   *  photo can be swapped in without a separate endpoint. */
+  @Patch('community/mine/:id')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 15 * 1024 * 1024 } }))
+  updateMySubmission(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: Record<string, string>,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const dto: UpdateCommunityEventDto = {
+      title: body.title || undefined,
+      description: body.description || undefined,
+      location: body.location || undefined,
+      mode: body.mode || undefined,
+      link: body.link || undefined,
+      eventbriteUrl: body.eventbriteUrl || undefined,
+      startsAt: body.startsAt || undefined,
+      endsAt: body.endsAt || undefined,
+      tags: body.tags
+        ? body.tags.split(',').map((t) => t.trim()).filter(Boolean)
+        : undefined,
+    };
+    return this.eventsService.updateMySubmission(id, user.userId, dto, file);
+  }
+
+  /** "My Events" → Hosting → Withdraw. Hard-deletes — see
+   *  EventsService.withdrawMySubmission for what that means for existing
+   *  RSVPs. */
+  @Delete('community/mine/:id')
+  @UseGuards(JwtAuthGuard)
+  withdrawMySubmission(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.eventsService.withdrawMySubmission(id, user.userId);
   }
 
   /** Single event, for a detail modal/page. Public — same reasoning as
@@ -167,6 +208,15 @@ export class EventsController {
   @UseGuards(JwtAuthGuard)
   rsvp(@CurrentUser() user: any, @Param('id') eventId: string) {
     return this.eventsService.rsvp(user.userId, eventId);
+  }
+
+  /** "My Events" → Attending → Cancel RSVP. Only clears the REGISTERED row
+   *  in GMBTE's own record — see EventsService.cancelRsvp for the
+   *  Eventbrite caveat. */
+  @Delete(':id/rsvp')
+  @UseGuards(JwtAuthGuard)
+  cancelRsvp(@CurrentUser() user: any, @Param('id') eventId: string) {
+    return this.eventsService.cancelRsvp(user.userId, eventId);
   }
 
   @Post(':id/save')

@@ -10,6 +10,7 @@ import { NotificationCategory, EventSource, PostStatus } from '@prisma/client';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { CreateCommunityEventDto } from './dto/create-community-event.dto';
+import { UpdateCommunityEventDto } from './dto/update-community-event.dto';
 
 /** Attendance.status values. Free-form string column in the DB (no enum),
  *  so keep the allowed values centralised here. */
@@ -180,6 +181,23 @@ export class EventsService {
     if (!existing) return { removed: false };
     if (existing.status !== ATTENDANCE_STATUS.SAVED) {
       throw new ForbiddenException('Cannot unsave an event you are registered for — cancel the RSVP instead');
+    }
+    await this.prisma.eventAttendance.delete({ where: { userId_eventId: { userId, eventId } } });
+    return { removed: true };
+  }
+
+  /** "My Events" → Attending → Cancel RSVP. Only removes a REGISTERED row —
+   *  if the event is Eventbrite-linked and was registered via the webhook
+   *  (viaEventbrite), this only clears GMBTE's own record; it does not
+   *  cancel their actual Eventbrite ticket, which they'd need to do on
+   *  Eventbrite directly. */
+  async cancelRsvp(userId: string, eventId: string) {
+    const existing = await this.prisma.eventAttendance.findUnique({
+      where: { userId_eventId: { userId, eventId } },
+    });
+    if (!existing) return { removed: false };
+    if (existing.status !== ATTENDANCE_STATUS.REGISTERED) {
+      throw new ForbiddenException('This event is only saved, not RSVP\'d — use unsave instead');
     }
     await this.prisma.eventAttendance.delete({ where: { userId_eventId: { userId, eventId } } });
     return { removed: true };
@@ -420,6 +438,83 @@ export class EventsService {
       where: { source: EventSource.USER, createdById: userId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /** "My Events" → Hosting → Edit. Ownership is checked here, not just at
+   *  the controller/guard level — a valid JWT only proves who's asking,
+   *  it says nothing about which event they're allowed to touch, so an
+   *  event belonging to someone else must be rejected even if the caller
+   *  is a perfectly legitimate, logged-in member. Editing an
+   *  already-APPROVED or previously-REJECTED event resets it to PENDING
+   *  and pulls it off the public listing until an admin re-approves —
+   *  otherwise a member could quietly swap in different details after
+   *  approval with no further review. */
+  async updateMySubmission(
+    eventId: string,
+    userId: string,
+    dto: UpdateCommunityEventDto,
+    file?: Express.Multer.File,
+  ) {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.source !== EventSource.USER || event.createdById !== userId) {
+      throw new ForbiddenException('You can only edit events you submitted yourself');
+    }
+
+    let imageUrl = event.imageUrl;
+    if (file) {
+      const uploaded = await this.uploadsService.uploadEventImage(file);
+      imageUrl = uploaded.url;
+    }
+
+    const updated = await this.prisma.event.update({
+      where: { id: eventId },
+      data: {
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.location !== undefined && { location: dto.location }),
+        ...(dto.mode !== undefined && { mode: dto.mode }),
+        ...(dto.link !== undefined && { link: dto.link }),
+        ...(dto.eventbriteUrl !== undefined && {
+          eventbriteEventId: dto.eventbriteUrl
+            ? this.eventbriteService.extractEventId(dto.eventbriteUrl) ?? undefined
+            : null,
+        }),
+        ...(dto.startsAt !== undefined && { startsAt: new Date(dto.startsAt) }),
+        ...(dto.endsAt !== undefined && { endsAt: dto.endsAt ? new Date(dto.endsAt) : null }),
+        ...(dto.tags !== undefined && { tags: dto.tags }),
+        imageUrl,
+        // Any edit sends it back under review, regardless of prior state —
+        // PENDING stays PENDING, APPROVED and REJECTED both reset to PENDING.
+        reviewStatus: PostStatus.PENDING,
+      },
+    });
+
+    await this.activityService.log(
+      userId,
+      'EVENT_SUBMITTED',
+      `Updated "${updated.title}" — back under review`,
+      { eventId },
+    );
+
+    return updated;
+  }
+
+  /** "My Events" → Hosting → Withdraw. Hard-deletes the event, which
+   *  cascades any existing EventAttendance rows (RSVPs/saves) per the
+   *  schema — anyone who'd registered simply finds it gone, with no
+   *  cancellation notice. Same ownership check as updateMySubmission. If
+   *  the event was linked to the member's own Eventbrite listing, this
+   *  never touches Eventbrite — that stays theirs to manage there. */
+  async withdrawMySubmission(eventId: string, userId: string) {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.source !== EventSource.USER || event.createdById !== userId) {
+      throw new ForbiddenException('You can only withdraw events you submitted yourself');
+    }
+
+    await this.prisma.event.delete({ where: { id: eventId } });
+    return { removed: true };
   }
 
   // ───────────────────────── Admin: community event moderation ─────────────────────────
