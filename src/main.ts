@@ -7,7 +7,12 @@ import { ResponseInterceptor } from './interceptors/response/response.intercepto
 import { AllExceptionsFilter } from './filters/all-exceptions/all-exceptions.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody:true is required so Stripe's webhook signature check in
+  // SubscriptionsController can read req.rawBody — the global JSON body
+  // parser below still runs normally for every other route.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
 
   // Render sits in front of us as a reverse proxy. Without this, Express
   // ignores X-Forwarded-For and req.ip resolves to Render's internal proxy

@@ -23,6 +23,7 @@ import { GreenAiModule } from './green-ai/green-ai.module';
 import { SearchModule } from './search/search.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { CreditsModule } from './credits/credits.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CreditsModule } from './credits/credits.module';
     }),
     PrismaModule,
     CreditsModule,
+    SubscriptionsModule,
     AuthModule,
     UsersModule,
     MailModule,
