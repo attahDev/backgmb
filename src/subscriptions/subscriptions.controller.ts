@@ -9,9 +9,9 @@ import {
   UseGuards,
   UsePipes,
   ValidationPipe,
-  RawBodyRequest,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/guards/roles.guard';
