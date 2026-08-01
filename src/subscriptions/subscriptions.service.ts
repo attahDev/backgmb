@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { SubscriptionTier, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,7 +28,25 @@ const PRICE_IDS: Record<string, string | undefined> = {
 
 @Injectable()
 export class SubscriptionsService {
-  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  // Lazy — constructed on first actual use, not at app boot. Without this,
+  // the whole Nest app fails to start whenever STRIPE_SECRET_KEY isn't set
+  // yet (e.g. before Stripe is wired up), even though nothing except
+  // createCheckoutSession/verifyAndConstructEvent below needs it. The
+  // MANUAL-grant admin path and the whole credits/entitlement flow never
+  // touch this getter at all.
+  private _stripe?: Stripe;
+  private get stripe(): Stripe {
+    if (!this._stripe) {
+      const key = process.env.STRIPE_SECRET_KEY;
+      if (!key) {
+        throw new ServiceUnavailableException(
+          'Stripe is not configured yet (STRIPE_SECRET_KEY missing). Use the admin manual-grant endpoint to test tiers in the meantime.',
+        );
+      }
+      this._stripe = new Stripe(key);
+    }
+    return this._stripe;
+  }
 
   constructor(private readonly prisma: PrismaService) {}
 
